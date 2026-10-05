@@ -12097,16 +12097,19 @@
     *: none
     dac_power_mode: "DAC power mode"
     es9218: "DAC output level"
+    shanlingq2: "Gain"
   </source>
   <dest>
     *: none
     dac_power_mode: "DAC power mode"
     es9218: "DAC output level"
+    shanlingq2: "Gain"
   </dest>
   <voice>
     *: none
     dac_power_mode: "DAC power mode"
     es9218: "DAC output level"
+    shanlingq2: "Gain"
   </voice>
 </phrase>
 <phrase>
@@ -12117,16 +12120,19 @@
     *: none
     dac_power_mode: "High performance"
     es9218: "High Gain (2 Vrms)"
+    shanlingq2: "High"
   </source>
   <dest>
     *: none
     dac_power_mode: "High performance"
     es9218: "High Gain (2 Vrms)"
+    shanlingq2: "High"
   </dest>
   <voice>
     *: none
     dac_power_mode: "High performance"
     es9218: "High Gain (2 Vrms)"
+    shanlingq2: "High"
   </voice>
 </phrase>
 <phrase>
@@ -12137,16 +12143,19 @@
     *: none
     dac_power_mode: "Save battery"
     es9218: "Low Gain (1 Vrms)"
+    shanlingq2: "Low"
   </source>
   <dest>
     *: none
     dac_power_mode: "Save battery"
     es9218: "Low Gain (1 Vrms)"
+    shanlingq2: "Low"
   </dest>
   <voice>
     *: none
     dac_power_mode: "Save battery"
     es9218: "Low Gain (1 Vrms)"
+    shanlingq2: "Low"
   </voice>
 </phrase>
 <phrase>

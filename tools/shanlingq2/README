@@ -65,7 +65,11 @@ an int pointer:
   0xc0044d1a  power, 1 on / 0 off (mclSetDacPwr; type 0x17 loads no FPGA)
   0xc0044d1c  headset mode, 1 for the DAC output (config_outputchannel, before
               power on)
-  0xc0044d00  volume (mclSetVol); scale to find in M2
+  0xc0044d00  volume, left << 8 | right, each stock's 0..100; the driver maps
+              it through high_volume_table/low_volume_table (by gain) to
+              the CS43131 register, -0.5 dB a step: 100 is 0 dB, 1 about
+              -84 dB, 0.5 dB steps from about -38 dB up, 0 mute
+  0xc0044d0d  gain, 1 high / 0 low (mclSetGainMode, stock's Gain)
   0xc0044d1b  PCM mode, 0 (hciplayer, per PCM track)
   0xc0044d1f  mute, 1 mute / 0 unmute (hciplayer: set on pause and close)
   0xc0044d04  mclSetPcmMode; unused so far

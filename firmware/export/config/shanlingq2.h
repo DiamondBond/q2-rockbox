@@ -94,6 +94,8 @@
 /* Audio codec */
 #define HAVE_SHANLINGQ2_CODEC
 #define HAVE_ALSA_32BIT
+/* low gain unless asked: safer for sensitive earphones */
+#define TARGET_DEFAULT_DAC_POWER_MODE SOUND_LOW_POWER
 
 /* We don't have hardware controls */
 #define HAVE_SW_TONE_CONTROLS

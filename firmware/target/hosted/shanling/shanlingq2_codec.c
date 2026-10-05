@@ -19,9 +19,11 @@
  ****************************************************************************/
 
 /* The Q2's CS43131 DAC, ALSA card 0, is driven through /dev/shanling_dac as
- * stock demo and hciplayer do (tools/shanlingq2/README). Volume is in
- * software for now. ponytail: the DAC's own volume (ioctl 0xc0044d00) stays
- * where stock left it; M2 maps Rockbox's volume onto it. */
+ * stock demo and hciplayer do (tools/shanlingq2/README). The DAC sits at its
+ * 0 dB step and Rockbox's volume is all in pcm-alsa's 32-bit mixer.
+ * ponytail: the DAC's own steps (0.5 dB from about -38 dB up, coarser below,
+ * per the driver's tables) could take the coarse part, as fiiolinux_codec.c
+ * does, if the noise floor at low volume ever matters. */
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -29,14 +31,16 @@
 #include "audiohw.h"
 #include "pcm-alsa.h"
 
+#define DAC_VOLUME   0xc0044d00 /* left << 8 | right, each 0..100 (0 dB) */
 #define DAC_POWER    0xc0044d1a /* 1 on, 0 off */
 #define DAC_HEADSET  0xc0044d1c /* 1: output to the DAC's jacks */
 #define DAC_PCM      0xc0044d1b /* 0: PCM, not DSD */
 #define DAC_MUTE     0xc0044d1f
+#define DAC_GAIN     0xc0044d0d /* 1 high, 0 low (mclSetGainMode) */
 
 static int dac = -1;
 static int muted = -1;
-static int vol[2];
+static int vol[2] = { -1000, -1000 }; /* silent until Rockbox sets its volume */
 
 static void dac_set(unsigned long req, int v)
 {
@@ -55,6 +59,7 @@ void audiohw_preinit(void)
     dac_set(DAC_HEADSET, 1);
     dac_set(DAC_POWER, 1);
     dac_set(DAC_PCM, 0);
+    dac_set(DAC_VOLUME, 100 << 8 | 100);
     audiohw_mute(false);
 }
 
@@ -94,4 +99,9 @@ void audiohw_mute(int mute)
         pcm_set_mixer_volume(-1000, -1000); /* tenths of a dB */
     else
         pcm_set_mixer_volume(vol[0], vol[1]);
+}
+
+void audiohw_set_power_mode(int mode)
+{
+    dac_set(DAC_GAIN, mode == SOUND_HIGH_POWER);
 }
