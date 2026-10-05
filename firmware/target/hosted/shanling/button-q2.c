@@ -91,7 +91,6 @@ int button_read_device(void)
 {
     static int buttons;
     static int anchor = -1; /* wheel position of the last tick; -1: no finger */
-    static bool vol_gesture; /* this touch started on the dark screen */
     struct input_event e;
     int ticks = 0;
 
@@ -105,28 +104,26 @@ int button_read_device(void)
             } else if (d == WHEEL && e.type == EV_ABS) {
                 if (e.code == ABS_PRESSURE && !e.value)
                     anchor = -1;
-                else if (e.code == ABS_X && anchor < 0) {
+                else if (e.code == ABS_X && anchor < 0)
                     anchor = e.value;
-                    /* a touch that starts on the dark screen stays volume;
-                     * the next touch re-decides, so finger-up need not */
-                    vol_gesture = !is_backlight_on(false);
-                } else if (e.code == ABS_X) {
+                else if (e.code == ABS_X)
                     ticks += wheel_ticks(&anchor, e.value);
-                }
             }
         }
     }
 
     if (ticks) {
-        /* A gesture from the dark screen wakes it and adjusts the volume
-         * instead of scrolling, so it cannot move the screen it woke. The
-         * multimedia volume buttons are the portable way there: screens that
-         * handle default events adjust the volume, others ignore them. */
-        backlight_on();
+        /* The dark screen's wheel is pocket volume: it adjusts the volume and
+         * stays dark, instead of scrolling or waking. The multimedia volume
+         * buttons are the portable way there: screens that handle default
+         * events adjust the volume, others ignore them. */
+        bool dark = !is_backlight_on(false);
+        if (!dark)
+            backlight_on();
         reset_poweroff_timer();
         int b = ticks * WHEEL_DIR > 0 ?
-                (vol_gesture ? BUTTON_MULTIMEDIA_VOLUME_UP : BUTTON_SCROLL_FWD) :
-                (vol_gesture ? BUTTON_MULTIMEDIA_VOLUME_DOWN : BUTTON_SCROLL_BACK);
+                (dark ? BUTTON_MULTIMEDIA_VOLUME_UP : BUTTON_SCROLL_FWD) :
+                (dark ? BUTTON_MULTIMEDIA_VOLUME_DOWN : BUTTON_SCROLL_BACK);
         for (int n = ticks < 0 ? -ticks : ticks; n > 0; n--)
             button_queue_post(b, 0);
     }
