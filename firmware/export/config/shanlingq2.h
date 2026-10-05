@@ -39,6 +39,10 @@
 
 #define HAVE_HEADPHONE_DETECTION
 
+/* The wheel's dark-screen gesture adjusts the volume through the portable
+ * multimedia volume buttons (apps/misc.c's default_event_handler) */
+#define HAVE_MULTIMEDIA_KEYS
+
 /* define this if you would like tagcache to build on this target */
 #define HAVE_TAGCACHE
 
