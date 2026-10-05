@@ -68,7 +68,7 @@ Build and run:
 - `cd build-q2 && Q2_SYSROOT=$HOME/.cache/q2/sysroot ../tools/configure --target=shanlingq2 --type=n && make -j$(nproc) && make zip`. Clang 22 + ld.lld; the full tree, codecs and plugins build with no errors.
 - Checks without the device: `cc tools/shanlingq2/test_wheel.c && ./a.out`; `~/.cache/q2/qemu-mipsel-static -L /tmp/q2root/squashfs-root build-q2/rockbox.elf` runs startup up to opening `/dev/fb0` (use `-strace`, kill it after; it waits forever in the panic screen).
 - Install: the user plugs the Q2 in (from the stock OS) as `/dev/sdb`, label `Q2`; `udisksctl mount -b /dev/sdb`, `unzip -o build-q2/rockbox.zip -d /run/media/diamond/Q2`, `sync`, `udisksctl unmount`. Delete `.rockbox/config.cfg` only when a changed default must take effect. Only the user can test on the device.
-- The dev loader (`update.tar`, V1.3R) is flashed. Escapes to the stock OS: hold Return at power-on; hold Play (shutdown exits `0x51`); or boot without the card. `.rockbox/rockbox.log` ends in `exit N`.
+- Loader: Q2 Pod V8.3 (released 2026-10-05) has the boot hook, so the dev loader (V1.3R) is no longer needed. On the device, hold Play/Pause at power-on to switch between Q2 Pod and Rockbox; the choice is kept in `/mnt/data/boot-target`. To get back to Q2 Pod from Rockbox: Settings > System > Boot stock OS, hold Play (shutdown exits `0x51`), hold Return at power-on, or boot without the card. Any exit starts demo and leaves the choice unchanged. `.rockbox/rockbox.log` ends in `exit N`.
 
 Verified on the device: display (rotation, corner inset), keys, wheel direction, playback incl. high sample rates, volume, the shutdown and boot escapes, brightness 1..20 and the screen off/on cycle (M3).
 
@@ -79,11 +79,15 @@ Done since (M3, M4):
 
 Final test passed on the device (2026-10-05): no tearing, theme, battery %, Boot stock OS. Committed and pushed (`b7a4e3a860`).
 
+Part A is done (2026-10-05): Q2 Pod V8.3 is released (https://github.com/DiamondBond/q2-pod/releases/tag/8.3). It adds `/usr/bin/q2boot` (q2-ringnav's `patch/boot.c`, Play/Pause held → exit 0) and a launcher in S90play (`BOOT_HOOK` in q2-ringnav's `tools/build.py`) that keeps this fork's launcher contract. The card now holds V8.3I's `update.tar`, ready to flash, and this branch's latest `rockbox.zip`, unzipped.
+
 Next, in order:
-1. Check on the device: the wake-up fix (the first key or wheel touch on a dark screen only lights it; installed, untested) and the Gain switch (M2, untested).
-2. Part A (in q2-ringnav): the q2-pod boot hook is built and tested on the host, but not yet committed or released (2026-10-05). `patch/boot.c` → `/usr/bin/q2boot` checks Play/Pause, and the launcher in S90play (`BOOT_HOOK` in `tools/build.py`) keeps this fork's launcher contract. The choice lives in `/mnt/data/boot-target`. Exits, including 0x51, start demo but don't change the choice. Once released, the dev loader isn't needed and the README should point to Q2 Pod.
-3. Optional: pause on headphone unplug (GPIO PA07/PA08); 375x320 layouts for the left-out plugins; USB storage from inside Rockbox.
-4. Announce in the Rockbox forums' New Ports board; later, upstream through Gerrit (the simulator build helps review).
+1. On the device: flash V8.3I from the card (System settings > System Update > TF card update). This replaces the dev loader. Then hold Play/Pause at power-on to switch to Rockbox and back. Also still unchecked: the wake-up fix (the first key or wheel touch on a dark screen only lights it) and the Gain switch (M2).
+2. Shutdown under the dual boot: Rockbox's `power_off` exits `0x51` (`firmware/target/hosted/system-hosted.c`), so a shutdown shows Q2 Pod, and the user has to power off a second time. Now that Q2 Pod is the way back, `power_off` should power off for real: mute and power down the DAC (`0xc0044d1a` = 0), set the amp GPIOs PC20 and PE22 to 0, blank the screen, then `poweroff`, following stock's `into_poweroff`. "Boot stock OS" stays `0x51`. Update the escape lists in `tools/shanlingq2/README` and in this file.
+3. `tools/shanlingq2/README`, "Installing a release": step 1 becomes "flash Q2 Pod V8.3 or later", with the dev loader (`mkupdate.py`) kept only for a stock-only setup. Mention Play/Pause at power-on.
+4. A release of the port: a `rockbox.zip` on the fork's GitHub releases (a tag on `shanlingq2`), with install notes pointing to Q2 Pod V8.3.
+5. Optional: pause on headphone unplug (GPIO PA07/PA08); 375x320 layouts for the left-out plugins; USB storage from inside Rockbox (the dwc2 gadget has to be set up as stock does; `pc_link` stays 0 until then).
+6. Announce in the Rockbox forums' New Ports board; later, upstream through Gerrit (the simulator build helps review).
 
 ## Verification
 
