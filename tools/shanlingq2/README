@@ -57,7 +57,7 @@ runs without demo's watchdog (checkappprocess.sh, started by demo) and without
 hciplayer (started by demo), so ALSA is free. A Rockbox that hangs keeps the
 stock UI away until the binary is removed with a card reader.
 
-Q2 Pod V8.7's Home shortcut (Display > Shortcut: Rockbox) also starts Rockbox
+Q2 Pod V8.8's Home shortcut (Display > Shortcut: Rockbox) also starts Rockbox
 after demo: demo leaves /tmp/q2pod-rockbox, stops its watchdog and hciplayer
 and kills itself, and S90play runs Rockbox the same way, then demo again.
 
