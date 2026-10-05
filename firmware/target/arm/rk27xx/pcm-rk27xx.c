@@ -196,8 +196,9 @@ static void i2s_init(void)
 #endif
 }
 
-#ifdef CODEC_SLAVE
-/* When codec is slave we need to setup i2s MCLK clock using codec pll.
+#if defined(CODEC_SLAVE) || defined(RK27XX_I2S_MCLK)
+/* When codec is slave, or master off our MCLK (RK27XX_I2S_MCLK), we need
+ * to setup i2s MCLK clock using codec pll.
  * The MCLK frequency is 256*codec frequency as i2s setup is:
  * LRCK/SCLK = 64 and MCLK/SCLK = 4 (see i2s_init() for reference)
  *
@@ -207,7 +208,16 @@ static void i2s_init(void)
  */
 static void set_codec_freq(unsigned int freq)
 {
+    static unsigned int cur_freq = HW_NUM_FREQ; /* none yet */
     long timeout;
+
+    /* Reprogramming the PLL glitches MCLK, and with it every clock the
+     * codec makes of it: an I2S side started on them can lose its framing.
+     * The rate is applied again on every start of recording, mostly
+     * unchanged. */
+    if (freq == cur_freq)
+        return;
+    cur_freq = freq;
 
     /* {CLKR, CLKF, CLKOD, CODECPLL_DIV} */
     static const unsigned int pcm_freq_params[HW_NUM_FREQ][4] = 
@@ -237,12 +247,17 @@ static void set_codec_freq(unsigned int freq)
                   (pcm_freq_params[freq][2]<<1) ; /* CLKOD factor */
 
 /* wait for CODEC PLL lock with 10 ms timeout
- * datasheet states that pll lock should take approx. 0.3 ms
+ * datasheet states that pll lock should take approx. 0.3 ms; the lock bit
+ * may still show the old lock at first
  */
-    timeout = current_tick + (HZ/100);
+    udelay(300);
+    timeout = current_tick + (HZ/100) + 1;
     while (!(SCU_STATUS & (1<<2)))
         if (TIME_AFTER(current_tick, timeout))
             break;
+
+    /* let the codec's clocks settle before an I2S side starts on them */
+    udelay(1000);
 
 }
 #endif
@@ -264,7 +279,7 @@ static void sink_dma_init(void)
 
 static void sink_set_freq(uint16_t freq)
 {
-#ifdef CODEC_SLAVE
+#if defined(CODEC_SLAVE) || defined(RK27XX_I2S_MCLK)
     set_codec_freq(freq);
 #endif
 
