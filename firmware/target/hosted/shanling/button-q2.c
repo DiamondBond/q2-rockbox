@@ -112,6 +112,12 @@ int button_read_device(void)
         }
     }
 
+    if (ticks && !is_backlight_on(false)) {
+        /* a touch on the dark screen's wheel only wakes it */
+        ticks = 0;
+        backlight_on();
+        reset_poweroff_timer();
+    }
     if (ticks) {
         backlight_on();
         reset_poweroff_timer();

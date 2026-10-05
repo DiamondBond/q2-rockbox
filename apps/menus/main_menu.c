@@ -488,9 +488,24 @@ MENUITEM_FUNCTION(debug_menu_item, 0, ID2P(LANG_DEBUG),
 MENUITEM_FUNCTION(show_legal_item, 0, ID2P(LANG_LEGAL_NOTICES),
                   show_legal, NULL, Icon_NOICON);
 
+#ifdef SHANLING_Q2
+/* shutting down returns to the launcher, which starts the stock player */
+static int boot_stock_os(void)
+{
+    sys_poweroff();
+    return 0;
+}
+MENUITEM_FUNCTION(boot_stock_item, 0, ID2P(LANG_BOOT_STOCK_OS),
+                  boot_stock_os, NULL, Icon_NOICON);
+#endif
+
 MAKE_MENU(info_menu, ID2P(LANG_SYSTEM), 0, Icon_System_menu,
           &show_info_item, &show_credits_item,
-          &show_runtime_item, &show_legal_item, &debug_menu_item);
+          &show_runtime_item, &show_legal_item, &debug_menu_item,
+#ifdef SHANLING_Q2
+          &boot_stock_item,
+#endif
+          );
 /*      INFO MENU                  */
 /***********************************/
 

@@ -70,21 +70,14 @@ Build and run:
 - Install: the user plugs the Q2 in (from the stock OS) as `/dev/sdb`, label `Q2`; `udisksctl mount -b /dev/sdb`, `unzip -o build-q2/rockbox.zip -d /run/media/diamond/Q2`, `sync`, `udisksctl unmount`. Delete `.rockbox/config.cfg` only when a changed default must take effect. Only the user can test on the device.
 - The dev loader (`update.tar`, V1.3R) is flashed. Escapes to the stock OS: hold Return at power-on; hold Play (shutdown exits `0x51`); or boot without the card. `.rockbox/rockbox.log` ends in `exit N`.
 
-Verified on the device: display (rotation, corner inset), keys, wheel direction, playback incl. high sample rates, volume, the shutdown and boot escapes. Not yet: the Gain switch (built and installed, untested).
+Verified on the device: display (rotation, corner inset), keys, wheel direction, playback incl. high sample rates, volume, the shutdown and boot escapes, brightness 1..20 and the screen off/on cycle (M3).
 
-Remaining, in order:
-1. **M3 power.**
-   - Backlight through libhardware2's PWM (`backlight-q2.c`, now a no-op that keeps the screen on): `pwm_request("PC00")`, `pwm_config(h, &{1, 0, 0, 10000, 111})`, `pwm_set_level(h, level ? level + 10 : 0)` (stock `toolSetBackLight` 0x5be20c, `initToolsModule`). Add `HAVE_BACKLIGHT_BRIGHTNESS` (drop the `DEFAULT_BRIGHTNESS_SETTING 1` stub in `shanlingq2.h`). Screen off: PWM 0 then `FBIOBLANK 4`; on: `FBIOBLANK 0`, `FBIOPAN_DISPLAY`, then the PWM level (stock `enable_fb`/`screen_action`). FBIOBLANK alone left the screen black on wake; test this carefully, the user had to force the device off.
-   - Battery: `power-linux.c` reads `/sys/class/power_supply/battery` (the AXP2101). Check `capacity` exists there; otherwise read `/sys/devices/i2c-0/0-0062/cw2015_capacity`. Charging from `battery/status` already works.
-   - USB: find the cable-present sysfs file (`POWER_DEV_NAME "usb"` is a guess; `/sys/module/dwc2/parameters/pc_link` is what stock reads). On plug-in, exit `0x51` so stock handles mass storage.
-   - A "Boot stock OS" menu item that exits `0x51`.
-   - Optional: headphone detection (GPIO PA07 3.5 mm, PA08 4.4 mm, 1 = plugged) for pause on unplug.
-2. **M4 release.**
-   - Double-buffer fb0 in `lcd-q2.c` (draw the hidden page, then pan, as stock demo does): the user sees tearing when scrolling.
-   - Theme: a cabbiev2 variant for 375x320 in `wps/WPSLIST` (the user added a 400x240 cabbiev2 recently, see `git log wps/`), with a status bar clear of the ~80 px glass corners (the built-in one runs full width at y 0); larger fonts (141 dpi).
-   - Plugins left out for the Q2 (no 375x320 layout or bitmaps): rockblox, wormlet, bubbles, jewels, invadrox, superdom, sudoku; zxbox (no hold switch). Add layouts where cheap, or leave them out.
-   - Release `rockbox.zip` with install notes (flash the loader `update.tar`, unzip to the card, the escapes).
-3. Final test by the user on the device.
+Done since (M3, M4):
+- M3: backlight through `/dev/jz_pwm` (the ioctls libhardware2 makes; verified). Battery from `cw2015_capacity`. The key or wheel touch that wakes the screen only wakes it (`DEFAULT_BL_FILTER_FIRST_KEYPRESS`). USB storage: shut down to stock (`pc_link` stays 0 under Rockbox, so plugging in cannot be detected). Settings > System > "Boot stock OS". Shutting down leaves the screen on for stock. Headphone detection skipped (optional).
+- M4: fb0 double-buffered in `lcd-q2.c` (draw the hidden page, pan, wait for vsync, copy to the other page). cabbiev2 for 375x320: a WPS, and an SBS made the Q2's default (`DEFAULT_SBSNAME`) with battery, clock and volume inside the glass and the lists' viewport; backdrops recomposed from the 400x240 ones. Plugins without a 375x320 layout stay left out. Install notes are in `tools/shanlingq2/README`.
+- A simulator build works: `Q2_SYSROOT` isn't needed with `--type=s` (`build-q2sim`, `make install`, then `./rockboxui`). Screens can be captured headless with Xvfb and xdotool (keys need a 150 ms hold).
+
+Final test passed on the device (2026-10-05): no tearing, theme, battery %, Boot stock OS. Remaining: commit and push.
 
 ## Verification
 

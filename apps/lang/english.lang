@@ -17240,3 +17240,20 @@
     touchscreen: "Touchscreen Flick Shortcuts"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_BOOT_STOCK_OS
+  desc: in the system menu: quit Rockbox for the player's own firmware
+  user: core
+  <source>
+    *: none
+    shanlingq2: "Boot stock OS"
+  </source>
+  <dest>
+    *: none
+    shanlingq2: "Boot stock OS"
+  </dest>
+  <voice>
+    *: none
+    shanlingq2: "Boot stock OS"
+  </voice>
+</phrase>

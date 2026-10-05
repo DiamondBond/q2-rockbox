@@ -315,6 +315,11 @@
 #define VIEWPORT_SETTING(var,name)      \
         TEXT_SETTING(F_THEMESETTING|F_NEEDAPPLY,var,name,"-", NULL, NULL)
 
+/* a target whose wake-up key would otherwise also act can filter it */
+#ifndef DEFAULT_BL_FILTER_FIRST_KEYPRESS
+#define DEFAULT_BL_FILTER_FIRST_KEYPRESS false
+#endif
+
 /* a target whose screen corners are hidden can inset its lists */
 #ifndef DEFAULT_UI_VIEWPORT
 #define DEFAULT_UI_VIEWPORT "-"
@@ -339,7 +344,12 @@ static const char graphic_numeric[] = "graphic,numeric";
 
 /* Default theme settings */
 #define DEFAULT_WPSNAME  "cabbiev2"
+#ifdef SHANLING_Q2
+/* the built-in status bar runs into the glass's rounded corners */
+#define DEFAULT_SBSNAME  "cabbiev2"
+#else
 #define DEFAULT_SBSNAME  "-"
+#endif
 #define DEFAULT_FMS_NAME "cabbiev2"
 
 #if LCD_HEIGHT <= 64
@@ -1490,7 +1500,7 @@ const struct settings_list settings[] = {
 
 #ifdef HAVE_BACKLIGHT
     OFFON_SETTING(0, bl_filter_first_keypress,
-                  LANG_BACKLIGHT_FILTER_FIRST_KEYPRESS, false,
+                  LANG_BACKLIGHT_FILTER_FIRST_KEYPRESS, DEFAULT_BL_FILTER_FIRST_KEYPRESS,
                   "backlight filters first keypress", NULL),
 #ifdef HAVE_REMOTE_LCD
     OFFON_SETTING(0, remote_bl_filter_first_keypress,

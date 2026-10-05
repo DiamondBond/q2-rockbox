@@ -26,6 +26,21 @@ System Update > TF card update), then copy the probe to .rockbox/rockbox on the
 card. Without that file the device boots as stock. The update's version is
 V1.3R, so stock V1.32 flashes back over it.
 
+Installing a release
+--------------------
+1. Build the loader from the stock firmware ZIP (Shanling's, so it cannot be
+   shipped): ./mkupdate.py 'Q2 Firmware V1.32.zip' /tmp/q2-loader. Copy
+   update.tar to the card's root and flash it from the stock OS (System
+   settings > System Update > TF card update). This is done once.
+2. Unzip rockbox.zip to the card's root, giving /.rockbox. The card must be
+   exFAT or FAT (stock mounts it so that binaries on it run).
+3. Restart. Rockbox starts when the card holds /.rockbox/rockbox.
+
+To get to the stock OS: Settings > System > Boot stock OS, or shut down
+(hold Play), or hold Return at power-on, or start without the card.
+For USB storage, go to the stock OS first. Stock
+firmware V1.32 flashes back over the loader (V1.3R) to remove it.
+
 Launcher contract (kept for the q2-pod boot hook)
 -------------------------------------------------
 S90play waits up to 3 s for /tmp/mmc_add (the card mounts asynchronously),
@@ -51,14 +66,19 @@ bootup", "cmd_mcu reset". The MCU (/dev/mcu) only drives the key-tone buzzer
 (3.5 mm), PA08 (4.4 mm), 1 = plugged.
 
 Display: /dev/fb0 320x375, 32 bpp BGRA (red at 16), two pages panned with
-FBIOPAN_DISPLAY. The 375x320 landscape view is stored turned clockwise:
+FBIOPAN_DISPLAY, then FBIO_WAITFORVSYNC (AWTK's lcd_fb, 0x6265bc). The 375x320 landscape view is stored turned clockwise:
 landscape (x, y) is panel (319 - y, x), confirmed on the device. Screen off:
 FBIOBLANK 4; on: FBIOBLANK 0 then FBIOPAN_DISPLAY (enable_fb/disable_fb).
 
 Backlight: libhardware2 PWM, not sysfs. h = pwm_request("PC00");
 pwm_config(h, &{1, 0, 0, 10000, 111}) (five ints); pwm_set_level(h, level ?
-level + 10 : 0) (toolSetBackLight 0x5be20c). The backlight is already on at
-boot, so drawing works without touching the PWM.
+level + 10 : 0) (toolSetBackLight 0x5be20c), stock's brightness 1..100 (50 by
+default). These are ioctls on /dev/jz_pwm, which backlight-q2.c makes itself:
+0x8001500b with the pin's name returns the channel; 0x80185021 takes six ints,
+the five above and the channel; 0xc004502c takes { channel, level }; 0x80045016
+with the channel releases it. The backlight is already on at boot. Screen off
+(screen_action): PWM 0, 50 ms, FBIOBLANK 4; on (awake_screen): FBIOBLANK 0,
+FBIOPAN_DISPLAY, 50 ms, the PWM level. FBIOBLANK alone left the screen black.
 
 DAC: /dev/shanling_dac (codec_cs43131.ko, I2C bus 5), ALSA hw:1,0. ioctls take
 an int pointer:
@@ -102,7 +122,9 @@ status reads "Charging". The cw2015 gauge is on I2C bus 0:
 /sys/devices/i2c-0/0-0062/cw2015_capacity (percent) and cw2015_voltage (mV)
 read 100 and 4346 on the charger; there is no cw2015_status (demo also probes
 other board revisions' paths). USB: dwc2 gadget,
-/sys/module/dwc2/parameters/pc_link. /sys/class/backlight is empty, as
+/sys/module/dwc2/parameters/pc_link reads 1 with a PC attached
+(check_usb_status, toolsGetpclinkStatus 0x5bf310), but only once stock has
+set up the gadget: under Rockbox it stays 0. /sys/class/backlight is empty, as
 expected. The card is exFAT, mounted fmask=0000, so binaries on it run.
 
 Clockwise lowers the wheel's ABS_X (confirmed with Rockbox on the device).

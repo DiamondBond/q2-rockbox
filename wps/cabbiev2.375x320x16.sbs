@@ -1,0 +1,12 @@
+# Cabbie v2.0
+# (C) 2007-2026 The Authors (see /rockbox/wps/AUTHORS)
+#
+# Status bar for the Shanling Q2: the glass hides the screen's corners (about
+# 80 px radius), so battery, clock and volume sit inside them at the top, and
+# the lists keep clear of them.
+#
+%Vi(-,16,32,343,256,1)
+#
+%Fl(2,15-Adobe-Helvetica.fnt)
+%V(52,7,271,18,2)
+%al%?bc<+|>%bl%%%ac%?cc<%?St(time format)<%cH|%cI>:%cM|>%ar%pv dB

@@ -245,12 +245,12 @@ target/hosted/kernel-unix.c
 target/hosted/lc-unix.c
 target/hosted/sysfs.c
 target/hosted/system-hosted.c
-target/hosted/power-linux.c
 target/hosted/xduoo/powermgmt-xduoo.c
 target/hosted/shanling/backlight-q2.c
 target/hosted/shanling/button-q2.c
 target/hosted/shanling/crt-q2.c
 target/hosted/shanling/lcd-q2.c
+target/hosted/shanling/power-q2.c
 #if !defined(BOOTLOADER)
 target/hosted/pcm-alsa.c
 target/hosted/shanling/shanlingq2_codec.c

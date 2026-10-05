@@ -54,8 +54,13 @@
 #define HAVE_LCD_ENABLE
 
 #define HAVE_BACKLIGHT
-/* no brightness control yet; system-hosted.c's crash screen asks for this */
-#define DEFAULT_BRIGHTNESS_SETTING 1
+#define HAVE_BACKLIGHT_BRIGHTNESS
+/* the key that wakes the screen (often the wheel's centre) only wakes it */
+#define DEFAULT_BL_FILTER_FIRST_KEYPRESS true
+/* 1..20 is stock's brightness 5..100 (backlight-q2.c); 10 is stock's default */
+#define MIN_BRIGHTNESS_SETTING     1
+#define MAX_BRIGHTNESS_SETTING     20
+#define DEFAULT_BRIGHTNESS_SETTING 10
 
 /* define this if you have a real-time clock */
 #define CONFIG_RTC RTC_HOSTED
@@ -71,7 +76,9 @@
 #define HAVE_SCROLLWHEEL
 
 /* Linux handles USB; Rockbox leaves it alone */
+#ifndef SIMULATOR
 #define USB_NONE
+#endif
 
 #define CONFIG_BATTERY_MEASURE PERCENTAGE_MEASURE
 
@@ -110,7 +117,3 @@
 #define BOOTFILE_EXT "q2"
 #define BOOTFILE     "rockbox." BOOTFILE_EXT
 #define BOOTDIR      "/.rockbox"
-
-/* More stuff */
-#define BATTERY_DEV_NAME "battery"
-#define POWER_DEV_NAME "usb"

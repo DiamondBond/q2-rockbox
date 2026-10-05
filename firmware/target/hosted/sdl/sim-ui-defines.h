@@ -510,6 +510,13 @@
 #define UI_LCD_POSX                 46
 #define UI_LCD_POSY                 61
 
+#elif defined(SHANLING_Q2)
+#define UI_TITLE                    "Shanling Q2"
+#define UI_WIDTH                    375
+#define UI_HEIGHT                   320
+#define UI_LCD_POSX                 0
+#define UI_LCD_POSY                 0
+
 #elif defined(RG_NANO)
 #define UI_TITLE                    "Anbernic RG Nano"
 #define UI_WIDTH                    370
