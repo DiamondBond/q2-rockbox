@@ -34,13 +34,14 @@ Installing a release
    loader above (mkupdate.py) does the same for the stock OS.
 2. Unzip rockbox.zip to the card's root, giving /.rockbox. The card must be
    exFAT or FAT (stock mounts it so that binaries on it run).
-3. Hold Play/Pause at power-on to switch between Q2 Pod and Rockbox. The
-   choice is kept for the next boots.
+3. Restart: Rockbox starts whenever the card holds /.rockbox/rockbox. (On
+   Q2 Pod V8.3, hold Play/Pause at power-on once first to choose it.)
 
-To get back to Q2 Pod: hold Play/Pause at power-on, or Settings > System >
-Boot stock OS, or hold Return at power-on, or start without the card. Shutting
-down (hold Play) powers off. For USB storage, go to Q2 Pod first. Stock
-firmware V1.32 flashes back over the loader (V1.3R) to remove it.
+To get back to Q2 Pod: Settings > System > Boot stock OS, or hold Return or
+Play/Pause at power-on; Q2 Pod then stays the choice until Play/Pause is held
+at power-on again. Starting without the card also gives Q2 Pod. Shutting down
+(hold Play) powers off. For USB storage, go to Q2 Pod first. Stock firmware
+V1.32 flashes back over the loader (V1.3R) to remove it.
 
 Launcher contract (kept for the q2-pod boot hook)
 -------------------------------------------------
