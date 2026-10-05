@@ -57,8 +57,7 @@ unsigned int power_input_status(void)
 
 bool q2_boot_stock;
 
-/* /dev/gpio, as libhardware2's gpio_get_value and gpio_set_func use it */
-#define GPIO_SET_FUNC  0x20004778 /* arg: { pin, argument count, arguments } */
+/* /dev/gpio, as libhardware2's gpio_get_value uses it */
 #define GPIO_GET_VALUE 0x2000477a /* arg: the pin's name; returns its level */
 
 static int gpio(void)
@@ -75,14 +74,4 @@ bool headphones_inserted(void)
 {
     return gpio() >= 0 && (ioctl(gpio(), GPIO_GET_VALUE, "PA07") > 0 ||
                            ioctl(gpio(), GPIO_GET_VALUE, "PA08") > 0);
-}
-
-/* the headphone amps off, as stock's into_poweroff does */
-void q2_amps_off(void)
-{
-    const char *pins[] = { "PC20", "PE22" };
-    for (int i = 0; i < 2 && gpio() >= 0; i++) {
-        const void *arg[3] = { pins[i], (void *)1, "output0" };
-        ioctl(gpio(), GPIO_SET_FUNC, arg);
-    }
 }

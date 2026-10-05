@@ -93,16 +93,15 @@ static void sig_handler(int sig, siginfo_t *siginfo, void *context)
 void power_off(void)
 {
 #ifdef SHANLING_Q2
-    if (q2_boot_stock) {
-        /* back to the launcher, which starts the stock player (0x51), for
-         * USB access to the card. The screen is left on for it, as at boot */
-        backlight_hw_on();
-        button_close_device();
-        sync();
-        _exit(0x51);
-    }
-    /* shutdown_hw has muted and powered down the DAC */
-    q2_amps_off();
+    /* Back to the launcher, which starts the stock player. Powering the device
+     * off from here needs stock's into_poweroff (MCU and PMIC); /sbin/poweroff
+     * alone leaves the screen blank and the device has to be reset. "Boot
+     * stock OS" (0x51) makes Q2 Pod the default, a plain shutdown keeps
+     * Rockbox. The screen is left on for Q2 Pod, as at boot. */
+    backlight_hw_on();
+    button_close_device();
+    sync();
+    _exit(q2_boot_stock ? 0x51 : 0);
 #endif
     backlight_hw_off();
     button_close_device();

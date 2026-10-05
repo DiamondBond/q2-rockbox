@@ -40,8 +40,9 @@ Installing a release
 To get back to Q2 Pod: Settings > System > Boot stock OS, or hold Return or
 Play/Pause at power-on; Q2 Pod then stays the choice until Play/Pause is held
 at power-on again. Starting without the card also gives Q2 Pod. Shutting down
-(hold Play) powers off. For USB storage, go to Q2 Pod first. Stock firmware
-V1.32 flashes back over the loader (V1.3R) to remove it.
+(hold Play) exits to Q2 Pod too, but keeps Rockbox as the default. For USB
+storage or a device poweroff, go to Q2 Pod first. Stock firmware V1.32 flashes
+back over the loader (V1.3R) to remove it.
 
 Launcher contract (kept for the q2-pod boot hook)
 -------------------------------------------------
