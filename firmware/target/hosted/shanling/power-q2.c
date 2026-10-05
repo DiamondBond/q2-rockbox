@@ -21,7 +21,10 @@
 /* Charging from the AXP2101 PMIC, the level from the cw2015 gauge (the PMIC's
  * power_supply has no capacity on the Q2). For USB storage, shut down to the
  * stock player: dwc2's pc_link stays 0 until it sets up the gadget. */
+#include <fcntl.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 #include "system.h"
 #include "kernel.h"
 #include "power.h"
@@ -50,4 +53,21 @@ int _battery_level(void)
 unsigned int power_input_status(void)
 {
     return charging_state() ? POWER_INPUT_USB_CHARGER : POWER_INPUT_NONE;
+}
+
+bool q2_boot_stock;
+
+/* the headphone amps off, as stock's into_poweroff does through libhardware2's
+ * gpio_set_func: { pin, argument count, arguments } */
+void q2_amps_off(void)
+{
+    int fd = open("/dev/gpio", O_RDWR | O_CLOEXEC);
+    if (fd < 0)
+        return;
+    const char *pins[] = { "PC20", "PE22" };
+    for (int i = 0; i < 2; i++) {
+        const void *arg[3] = { pins[i], (void *)1, "output0" };
+        ioctl(fd, 0x20004778, arg);
+    }
+    close(fd);
 }

@@ -489,9 +489,12 @@ MENUITEM_FUNCTION(show_legal_item, 0, ID2P(LANG_LEGAL_NOTICES),
                   show_legal, NULL, Icon_NOICON);
 
 #ifdef SHANLING_Q2
-/* shutting down returns to the launcher, which starts the stock player */
+/* shuts down to the launcher, which starts the stock player */
 static int boot_stock_os(void)
 {
+#ifndef SIMULATOR
+    q2_boot_stock = true;
+#endif
     sys_poweroff();
     return 0;
 }

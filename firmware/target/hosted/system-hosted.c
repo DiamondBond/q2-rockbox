@@ -93,13 +93,16 @@ static void sig_handler(int sig, siginfo_t *siginfo, void *context)
 void power_off(void)
 {
 #ifdef SHANLING_Q2
-    /* back to the launcher, which starts the stock player (0x51); that
-     * powers off, and gives USB access to the card. The screen is left on
-     * for it, as at boot */
-    backlight_hw_on();
-    button_close_device();
-    sync();
-    _exit(0x51);
+    if (q2_boot_stock) {
+        /* back to the launcher, which starts the stock player (0x51), for
+         * USB access to the card. The screen is left on for it, as at boot */
+        backlight_hw_on();
+        button_close_device();
+        sync();
+        _exit(0x51);
+    }
+    /* shutdown_hw has muted and powered down the DAC */
+    q2_amps_off();
 #endif
     backlight_hw_off();
     button_close_device();

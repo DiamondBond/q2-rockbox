@@ -25,4 +25,8 @@
 
 #define NEED_GENERIC_BYTESWAPS
 
+/* power_off() returns to the launcher (exit 0x51) instead of powering off */
+extern bool q2_boot_stock;
+void q2_amps_off(void);
+
 #endif /* __SYSTEM_TARGET_H__ */
