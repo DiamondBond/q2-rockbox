@@ -33,7 +33,7 @@ Installing a release
    System Update > TF card update. This is done once. Without Q2 Pod, the dev
    loader above (mkupdate.py) does the same for the stock OS.
 2. Unzip rockbox.zip from the releases page
-   (https://github.com/DiamondBond/rockbox/releases) to the card's root,
+   (https://github.com/DiamondBond/q2-rockbox/releases) to the card's root,
    giving /.rockbox. The card must be exFAT or FAT (stock mounts it so that
    binaries on it run).
 3. Restart: Rockbox starts whenever the card holds /.rockbox/rockbox, from

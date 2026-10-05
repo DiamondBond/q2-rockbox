@@ -35,7 +35,7 @@ There is no shell on the device, so the hook doubles as the way to run any test 
 ## Naming and repo setup (for official recognition)
 
 The repo name does not matter to Rockbox. What gets a port recognised is landing it upstream: patches go through Gerrit (gerrit.rockbox.org) on top of master, with GPLv2 headers and Rockbox's coding style. A hosted port that works is then listed as an "unstable" target. To make that path as short as possible:
-- **Fork `github.com/Rockbox/rockbox` as `DiamondBond/rockbox`** (keep the name), with work on branch **`shanlingq2`**. Clone it to `~/src/rockbox`. The history stays upstream's, so commits rebase and push straight to Gerrit.
+- **Fork `github.com/Rockbox/rockbox` as `DiamondBond/q2-rockbox`**, with work on branch **`shanlingq2`**. Clone it to `~/src/rockbox`. The history stays upstream's, so commits rebase and push straight to Gerrit.
 - Target id **`shanlingq2`** and model name "Shanling Q2", matching the existing native `shanlingq1`. The target dirs are `firmware/target/hosted/shanling/`, plus `firmware/export/config/shanlingq2.h`.
 - The Q2 Pod hook stays in q2-pod. Rockbox only needs a "Boot Q2 Pod" exit code, which is target-local and harmless upstream.
 - Announce the port in the Rockbox forums' New Ports board once M2 plays audio.
@@ -44,7 +44,7 @@ The repo name does not matter to Rockbox. What gets a port recognised is landing
 
 It has no context from this repo, so start it with: "Read `~/git/q2-ringnav/docs/boot.md`, `docs/internals.md` (Videos, DAC, battery, encoder sections) and `patch/video.c`, and the unpacked stock rootfs via `unsquashfs` on `~/git/q2-ringnav/build/stock.squashfs`. Then do M0." Part A is built here in q2-ringnav. The Rockbox instance only relies on its contract: binary `/mnt/mmc/.rockbox/rockbox`, log to `rockbox.log`, exit `0x51` boots Q2 Pod.
 
-## Part B: Rockbox port (fork `DiamondBond/rockbox`, branch `shanlingq2`, hosted)
+## Part B: Rockbox port (fork `DiamondBond/q2-rockbox`, branch `shanlingq2`, hosted)
 
 Modelled on the closest hosted Ingenic Linux targets (`firmware/target/hosted/xduoo`, `aigo`, and the shared `pcm-alsa.c`, `alsa-controls.c`, `lcd-linuxfb`, `power-linux`/`sysfs.c`).
 
@@ -85,7 +85,7 @@ Next, in order:
 1. On the device: flash V8.3I from the card (System settings > System Update > TF card update). This replaces the dev loader. Then hold Play/Pause at power-on to switch to Rockbox and back. Also still unchecked: the wake-up fix (the first key or wheel touch on a dark screen only lights it) and the Gain switch (M2).
 2. Done (2026-10-06): shutdown exits to Q2 Pod instead of powering off. A device poweroff needs stock's `into_poweroff` (MCU and PMIC); `/sbin/poweroff` from Rockbox left a white screen that needed a reset. `power_off` now exits `0` (plain shutdown, choice kept) or `0x51` from "Boot stock OS" (`q2_boot_stock`, making Q2 Pod the default). The amp GPIOs stay out of it until a real poweroff path lands.
 3. Done (2026-10-06): `tools/shanlingq2/README`, "Installing a release", now starts from Q2 Pod V8.3; the dev loader is for a stock-only setup.
-4. Done (2026-10-06): a release of the port: https://github.com/DiamondBond/rockbox/releases/tag/v1.0 (a tag on `shanlingq2`, with install notes pointing to Q2 Pod).
+4. Done (2026-10-06): a release of the port: https://github.com/DiamondBond/q2-rockbox/releases (tagged on `shanlingq2`, with install notes pointing to Q2 Pod).
 5. Optional: 375x320 layouts for the left-out plugins; USB storage from inside Rockbox (the dwc2 gadget has to be set up as stock does; `pc_link` stays 0 until then).
 6. Announce in the Rockbox forums' New Ports board; later, upstream through Gerrit (the simulator build helps review).
 
