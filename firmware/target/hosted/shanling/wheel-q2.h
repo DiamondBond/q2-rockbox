@@ -22,10 +22,10 @@
 
 /* The wheel reports the finger's position around the ring, 1..WHEEL_RANGE. */
 #define WHEEL_RANGE 200
-/* Ring units per tick: stock's 10 scaled by 2.0 (10 ticks a turn), after
- * 1.2x and 1.5x still felt too sensitive in Rockbox. The calibration knob
- * for how far a turn scrolls. */
-#define WHEEL_STEP  20
+/* Ring units per tick: stock's 10 scaled by 1.8 (about 11 ticks a turn),
+ * settled after 1.2x and 1.5x felt too sensitive and 2.0x too slow. The
+ * calibration knob for how far a turn scrolls. */
+#define WHEEL_STEP  18
 /* 1 if clockwise raises the position, -1 if it lowers it: on the device,
  * clockwise lowers it */
 #define WHEEL_DIR   -1
