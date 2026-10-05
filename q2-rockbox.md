@@ -81,7 +81,7 @@ Final test passed on the device (2026-10-05): no tearing, theme, battery %, Boot
 
 Next, in order:
 1. Check on the device: the wake-up fix (the first key or wheel touch on a dark screen only lights it; installed, untested) and the Gain switch (M2, untested).
-2. Part A (in q2-ringnav): the q2-pod boot hook, so Q2 Pod and Rockbox share the device (hold Play at power-on to switch, the last choice remembered). The card keeps q2-pod's `update.tar` until then.
+2. Part A (in q2-ringnav): the q2-pod boot hook is built and tested on the host, but not yet committed or released (2026-10-05). `patch/boot.c` → `/usr/bin/q2boot` checks Play/Pause, and the launcher in S90play (`BOOT_HOOK` in `tools/build.py`) keeps this fork's launcher contract. The choice lives in `/mnt/data/boot-target`. Exits, including 0x51, start demo but don't change the choice. Once released, the dev loader isn't needed and the README should point to Q2 Pod.
 3. Optional: pause on headphone unplug (GPIO PA07/PA08); 375x320 layouts for the left-out plugins; USB storage from inside Rockbox.
 4. Announce in the Rockbox forums' New Ports board; later, upstream through Gerrit (the simulator build helps review).
 
