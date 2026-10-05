@@ -85,7 +85,7 @@ Next, in order:
 1. On the device: flash V8.3I from the card (System settings > System Update > TF card update). This replaces the dev loader. Then hold Play/Pause at power-on to switch to Rockbox and back. Also still unchecked: the wake-up fix (the first key or wheel touch on a dark screen only lights it) and the Gain switch (M2).
 2. Done (2026-10-06): shutdown exits to Q2 Pod instead of powering off. A device poweroff needs stock's `into_poweroff` (MCU and PMIC); `/sbin/poweroff` from Rockbox left a white screen that needed a reset. `power_off` now exits `0` (plain shutdown, choice kept) or `0x51` from "Boot stock OS" (`q2_boot_stock`, making Q2 Pod the default). The amp GPIOs stay out of it until a real poweroff path lands.
 3. Done (2026-10-06): `tools/shanlingq2/README`, "Installing a release", now starts from Q2 Pod V8.3; the dev loader is for a stock-only setup.
-4. A release of the port: a `rockbox.zip` on the fork's GitHub releases (a tag on `shanlingq2`), with install notes pointing to Q2 Pod V8.3.
+4. Done (2026-10-06): a release of the port: https://github.com/DiamondBond/rockbox/releases/tag/v1.0 (a tag on `shanlingq2`, with install notes pointing to Q2 Pod).
 5. Optional: 375x320 layouts for the left-out plugins; USB storage from inside Rockbox (the dwc2 gadget has to be set up as stock does; `pc_link` stays 0 until then).
 6. Announce in the Rockbox forums' New Ports board; later, upstream through Gerrit (the simulator build helps review).
 
