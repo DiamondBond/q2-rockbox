@@ -22,9 +22,10 @@
 
 /* The wheel reports the finger's position around the ring, 1..WHEEL_RANGE. */
 #define WHEEL_RANGE 200
-/* Ring units per tick: 20 ticks a turn (stock: 20 for a gesture's first, then
- * 10). The calibration knob for how far a turn scrolls. */
-#define WHEEL_STEP  10
+/* Ring units per tick: stock's 10 scaled by 1.2, the same WHEEL_TRAVEL as Q2
+ * Pod's patch (about 17 ticks a turn). The calibration knob for how far a
+ * turn scrolls. */
+#define WHEEL_STEP  12
 /* 1 if clockwise raises the position, -1 if it lowers it: on the device,
  * clockwise lowers it */
 #define WHEEL_DIR   -1

@@ -59,6 +59,12 @@ static const struct button_mapping button_context_tree[]  = {
     { ACTION_TREE_WPS,          BUTTON_PLAY|BUTTON_REL,      BUTTON_PLAY },
     { ACTION_TREE_STOP,         BUTTON_PLAY|BUTTON_REPEAT,   BUTTON_PLAY },
     { ACTION_TREE_HOTKEY,       BUTTON_SELECT|BUTTON_PLAY,   BUTTON_NONE },
+#ifdef SHANLING_Q2
+    /* Return is the Q2's only back key (the side keys are left/right), so it
+     * goes up one folder as the H2's Back does; at the root the tree itself
+     * exits to the main menu. Hold stays the quick screen. */
+    { ACTION_STD_CANCEL,        BUTTON_MENU|BUTTON_REL,      BUTTON_MENU },
+#endif
 
     LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_STD)
 }; /* button_context_tree */
