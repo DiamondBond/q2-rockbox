@@ -41,12 +41,15 @@ fft
 chessbox
 fractals
 imageviewer
+#ifndef SHANLING_Q2 /* no 375x320 layout */
 sudoku
+#endif
 reversi
 goban
 frotz
 
-#ifndef OLYMPUS_MROBE_500
+/* the Q2 has the iPod buttons but no hold switch, zxbox's only way out */
+#if !defined(OLYMPUS_MROBE_500) && !defined(SHANLING_Q2)
 #if PLUGIN_BUFFER_SIZE > 0x40000 || PLUGIN_BUFFER_SIZE <= 0x20000 /* overlay */
 zxbox
 #endif

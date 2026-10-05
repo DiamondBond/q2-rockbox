@@ -315,6 +315,11 @@
 #define VIEWPORT_SETTING(var,name)      \
         TEXT_SETTING(F_THEMESETTING|F_NEEDAPPLY,var,name,"-", NULL, NULL)
 
+/* a target whose screen corners are hidden can inset its lists */
+#ifndef DEFAULT_UI_VIEWPORT
+#define DEFAULT_UI_VIEWPORT "-"
+#endif
+
 /* some sets of values which are used more than once, to save memory */
 static const char off[] = "off";
 static const char off_on[] = "off,on";
@@ -2496,7 +2501,8 @@ const struct settings_list settings[] = {
 #endif
 
     /* Customizable list */
-    VIEWPORT_SETTING(ui_vp_config, "ui viewport"),
+    TEXT_SETTING(F_THEMESETTING|F_NEEDAPPLY, ui_vp_config, "ui viewport",
+                 DEFAULT_UI_VIEWPORT, NULL, NULL),
 #ifdef HAVE_REMOTE_LCD
     VIEWPORT_SETTING(remote_ui_vp_config, "remote ui viewport"),
 #endif

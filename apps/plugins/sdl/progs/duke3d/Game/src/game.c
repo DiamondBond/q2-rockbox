@@ -1768,6 +1768,8 @@ void displayfragbar(void)
     }
 }
 
+void duke_tics(short offx, short offy, short color);
+
 void display_boardfilename_FPS_weapon(short *offx, short *offy, short *stepx, short *stepy)
 {
 

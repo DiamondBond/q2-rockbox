@@ -211,7 +211,7 @@ void ev_poll(void)
             ev_postevent(&ev);
         }
 #endif
-#if CONFIG_KEYPAD == IPOD_4G_PAD
+#if CONFIG_KEYPAD == IPOD_4G_PAD && defined(HAS_BUTTON_HOLD)
         if(rb->button_hold()) {
 #else
         if(pressed & options.MENU) {

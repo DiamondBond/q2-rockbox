@@ -34,7 +34,8 @@ __asm__(".set noreorder\n.globl __start\n__start:\n"
         "li $8, -8\nand $29, $29, $8\naddiu $29, $29, -32\n"
         "lui $4, %hi(main)\naddiu $4, $4, %lo(main)\nmove $7, $0\n"
         "sw $0, 16($29)\nsw $2, 20($29)\nsw $29, 24($29)\n"
-        "jal __libc_start_main\nnop\n1: b 1b\nnop\n.set reorder\n");
+        "lw $25, %call16(__libc_start_main)($28)\njalr $25\nnop\n"
+        "1: b 1b\nnop\n.set reorder\n");
 
 /* crt1.o's marker: without it glibc takes the program for a libc5-era one and
  * gives it old-layout stdio FILEs, which crash exit() */

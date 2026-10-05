@@ -831,6 +831,44 @@ mipsellinuxcc () {
  prefixtools "mipsel-rockbox-linux-gnu-"
 }
 
+q2linuxcc () {
+ # clang and ld.lld against the Shanling Q2's own libraries: its glibc 2.28 is
+ # nan2008 and FP64, which no packaged gcc targets (tools/shanlingq2/README)
+ if [ -z "$Q2_SYSROOT" ]; then
+   echo "ERROR: set Q2_SYSROOT to a sysroot made by tools/shanlingq2/mksysroot.sh"
+   exit 1
+ fi
+ q2target="--target=mipsel-linux-gnu --sysroot=$Q2_SYSROOT"
+ CC=clang
+ CPP=clang
+ # configure's arch probe drops CPP's flags; this is what it would find
+ arch="mips"
+ arch_version="32"
+ LD=ld.lld
+ AR=llvm-ar
+ AS="clang $q2target -c"
+ OC=llvm-objcopy
+ RANLIB=llvm-ranlib
+ GCCOPTS=`echo $CCOPTS | sed -e s/-ffreestanding// -e s/-nostdlib//`
+ GCCOPTS="$GCCOPTS $q2target -march=mips32r2 -mabi=32 -mfp64 -mnan=2008 -mabs=2008 -fPIC -Umips"
+ GCCOPTS="$GCCOPTS -D_GNU_SOURCE=1 -U_FORTIFY_SOURCE -D_REENTRANT"
+ # what gcc 9, the other targets' compiler, only warns about
+ GCCOPTS="$GCCOPTS -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types"
+ GCCOPTS="$GCCOPTS -Wno-error=implicit-function-declaration -Wno-error=implicit-int"
+ GCCOPTS="$GCCOPTS -Wno-error=incompatible-pointer-types"
+ # configure adds gcc-only flags later; clang ignores them, quietly
+ GCCOPTS="$GCCOPTS -Wno-unknown-warning-option -Wno-ignored-optimization-argument"
+ GCCOPTIMIZE=''
+ LDOPTS="-lasound -lpthread -lm -ldl -lrt $LDOPTS"
+ # no crt1.o or static libgcc: target/hosted/shanling/crt-q2.c starts the
+ # program, and -lgcc is the Q2's libgcc_s
+ GLOBAL_LDOPTS="$GLOBAL_LDOPTS -fuse-ld=lld -no-pie -nostdlib -Wl,-z,defs -lc -l:ld-linux-mipsn8.so.1 -lgcc"
+ SHARED_LDFLAGS="-shared"
+ SHARED_CFLAGS='-fPIC -fvisibility=hidden'
+ endian="little"
+ thread_support="HAVE_SIGALTSTACK_THREADS"
+}
+
 rgnanocc () {
     if [ -z "$FUNKEY_SDK_PATH" ]; then
         echo "ERROR: You need the FunKey-SDK installed and have the FUNKEY_SDK_PATH"
@@ -1735,6 +1773,7 @@ cat <<EOF
                            242) X3II
  ==Shanling==              243) X20              ==HiBy==
  260) Q1                                         300) R3 Pro II
+ 261) Q2 (hosted)
 			   ==Surfans==           301) R1
  ==Echo project==          280) F28 (WIP)
  270) Echo R1 (WIP)                              ==Hidizs==
@@ -4123,6 +4162,29 @@ fi
     t_manufacturer="ingenic_x1000"
     t_soc="ingenic"
     t_model="shanlingq1"
+    ;;
+
+   261|shanlingq2)
+    target_id=126
+    application=yes
+    app_type="hibyos"
+    modelname="shanlingq2"
+    target="SHANLING_Q2"
+    memory=64
+    q2linuxcc
+    tool="cp "
+    boottool="cp "
+    bmp2rb_mono="$rootdir/tools/bmp2rb -f 0"
+    bmp2rb_native="$rootdir/tools/bmp2rb -f 10"
+    output="rockbox"
+    bootoutput="bootloader.q2"
+    appextra=""
+    plugins="yes"
+    # architecture, manufacturer and model for the target-tree build
+    t_cpu="hosted"
+    t_manufacturer="shanling"
+    t_model="shanlingq2"
+    sysfontbl="16-Terminus"
     ;;
 
     270|echor1)

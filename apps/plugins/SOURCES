@@ -27,7 +27,9 @@ playing_time.c
 properties.c
 random_folder_advance_config.c
 rb_info.c
+#ifndef SHANLING_Q2 /* no 375x320 layout */
 rockblox.c
+#endif
 search.c
 settings_dumper.c
 snow.c
@@ -143,12 +145,16 @@ spacerocks.c
 
 blackjack.c
 bounce.c
+#ifndef SHANLING_Q2 /* no 375x320 layout */
 bubbles.c
+#endif
 calculator.c
 chip8.c
 chopper.c
 demystify.c
+#ifndef SHANLING_Q2 /* no 375x320 layout */
 jewels.c
+#endif
 minesweeper.c
 open_plugins.c
 oscilloscope.c
@@ -163,7 +169,9 @@ sokoban.c
 star.c
 starfield.c
 vu_meter.c
+#ifndef SHANLING_Q2 /* no 375x320 layout */
 wormlet.c
+#endif
 
 #ifdef HAVE_HOTKEY
 announce_status.c
@@ -201,8 +209,10 @@ matrix.c
 speedread.c
 
 #if (LCD_WIDTH > 138)
+#ifndef SHANLING_Q2 /* no 375x320 layout */
 invadrox.c
 superdom.c
+#endif
 #endif
 
 #endif /* LCD_DEPTH > 1 */

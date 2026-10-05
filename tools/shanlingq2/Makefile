@@ -14,8 +14,13 @@ CFLAGS = --target=mipsel-linux-gnu --sysroot=$(SYSROOT) -march=mips32r2 -mabi=32
 LDFLAGS = -m elf32ltsmip -e __start --dynamic-linker /lib/ld-linux-mipsn8.so.1 \
           --image-base=0x400000 -z noexecstack --hash-style=sysv --build-id=none -s
 
+CRT = ../../firmware/target/hosted/shanling/crt-q2.c
+
 rockbox: crt.o hello.o
 	ld.lld $(LDFLAGS) $^ $(SYSROOT)/lib/libc.so.6 $(SYSROOT)/lib/ld-linux-mipsn8.so.1 -o $@
+
+crt.o: $(CRT)
+	clang $(CFLAGS) -c $< -o $@
 
 %.o: %.c
 	clang $(CFLAGS) -c $< -o $@

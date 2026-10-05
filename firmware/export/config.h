@@ -575,6 +575,8 @@ Lyre prototype 1 */
 #include "config/aigoerosq.h"
 #elif defined(SHANLING_Q1)
 #include "config/shanlingq1.h"
+#elif defined(SHANLING_Q2)
+#include "config/shanlingq2.h"
 #elif defined(EROS_QN)
 #include "config/erosqnative.h"
 #elif defined(ECHO_R1)

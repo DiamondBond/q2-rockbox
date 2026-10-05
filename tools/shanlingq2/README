@@ -9,7 +9,8 @@ run anything on the device.
 
   mksysroot.sh  sysroot for clang: Debian buster mipsel headers (glibc 2.28,
                 Linux, alsa-lib; sha256-pinned) and the stock rootfs's libraries
-  crt.c         __start and the libc_nonshared wrappers; Debian's crt1.o and
+  ../../firmware/target/hosted/shanling/crt-q2.c
+                __start and the libc_nonshared wrappers; Debian's crt1.o and
                 libc_nonshared.a are legacy NaN, which ld.lld will not mix
   hello.c       the M0 probe (Makefile builds it as "rockbox")
   mkupdate.py   the dev loader update.tar
@@ -80,7 +81,7 @@ Keys: /dev/input/event1 (keyboard_gpio_add.ko, module_driver/*.sh):
 
 Wheel: a capacitive ring, /dev/input/event3 "hyn_sliderbar" (hyn_slider.ko,
 I2C bus 2). Plain evdev: ABS_X 1..200, the finger's position around the ring
-(wrapping 1 <-> 200), and ABS_PRESSURE 1 on touch, 0 on lift; reports every
+(wrapping 1 <-> 200; clockwise lowers it), and ABS_PRESSURE 1 on touch, 0 on lift; reports every
 12 ms. demo reads it through tslib (ts.conf: input, pthres, dejitter, linear);
 encoderknob_thread_run (0x6256a0) wraps each delta into -100..100
 (get_direction 0x62587c) and ticks past 20 for a gesture's first step and 10
@@ -100,6 +101,4 @@ other board revisions' paths). USB: dwc2 gadget,
 /sys/module/dwc2/parameters/pc_link. /sys/class/backlight is empty, as
 expected. The card is exFAT, mounted fmask=0000, so binaries on it run.
 
-Still to confirm on the device: which way round the wheel's ABS_X grows. The
-probe run's first turn, probably counter-clockwise, decreased it; M1 keeps the
-direction in one sign to flip if scrolling feels backwards.
+Clockwise lowers the wheel's ABS_X (confirmed with Rockbox on the device).

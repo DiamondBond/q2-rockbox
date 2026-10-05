@@ -39,4 +39,10 @@ for l in lib/ld-linux-mipsn8.so.1 lib/libc.so.6 lib/libpthread.so.0 lib/libm.so.
          lib/libgcc_s.so.1 usr/lib/libasound.so.2 usr/lib/libts-0.0.so.0 usr/lib/libhardware2.so; do
     cp -L "$tmp/root/$l" "$out/lib/"
 done
+# the names -l looks for; -lgcc is libgcc_s, as the Q2 has no static libgcc
+cd "$out/lib"
+for l in c:libc.so.6 m:libm.so.6 pthread:libpthread.so.0 dl:libdl.so.2 rt:librt.so.1 \
+         asound:libasound.so.2 gcc:libgcc_s.so.1; do
+    ln -sf "${l#*:}" "lib${l%%:*}.so"
+done
 echo "sysroot: $out"

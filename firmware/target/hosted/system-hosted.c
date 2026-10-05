@@ -95,6 +95,11 @@ void power_off(void)
     backlight_hw_off();
     button_close_device();
     sync();
+#ifdef SHANLING_Q2
+    /* back to the launcher, which starts the stock player (0x51); that
+     * powers off, and gives USB access to the card */
+    _exit(0x51);
+#endif
     system("/sbin/poweroff");
     while (1) {
         // Make sure we're not throttling the cpu
