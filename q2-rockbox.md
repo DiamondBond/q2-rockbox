@@ -73,7 +73,7 @@ Build and run:
 Verified on the device: display (rotation, corner inset), keys, wheel direction, playback incl. high sample rates, volume, the shutdown and boot escapes, brightness 1..20 and the screen off/on cycle (M3).
 
 Done since (M3, M4):
-- M3: backlight through `/dev/jz_pwm` (the ioctls libhardware2 makes; verified). Battery from `cw2015_capacity`. The key or wheel touch that wakes the screen only wakes it (`DEFAULT_BL_FILTER_FIRST_KEYPRESS`). USB storage: shut down to stock (`pc_link` stays 0 under Rockbox, so plugging in cannot be detected). Settings > System > "Boot stock OS". Shutting down leaves the screen on for stock. Headphone detection skipped (optional).
+- M3: backlight through `/dev/jz_pwm` (the ioctls libhardware2 makes; verified). Battery from `cw2015_capacity`. The key or wheel touch that wakes the screen only wakes it (`DEFAULT_BL_FILTER_FIRST_KEYPRESS`). USB storage: shut down to stock (`pc_link` stays 0 under Rockbox, so plugging in cannot be detected). Settings > System > "Boot stock OS". Shutting down leaves the screen on for stock. Headphone detection (2026-10-06, untested on the device): the 3.5 mm (PA07) and 4.4 mm (PA08) jack pins through `/dev/gpio` (`GPIO_GET_VALUE` 0x2000477a, as stock's `check_headset_status`), so "Pause on headphone unplug" works.
 - M4: fb0 double-buffered in `lcd-q2.c` (draw the hidden page, pan, wait for vsync, copy to the other page). cabbiev2 for 375x320: a WPS, and an SBS made the Q2's default (`DEFAULT_SBSNAME`) with battery, clock and volume inside the glass and the lists' viewport; backdrops recomposed from the 400x240 ones. Plugins without a 375x320 layout stay left out. Install notes are in `tools/shanlingq2/README`.
 - A simulator build works: `Q2_SYSROOT` isn't needed with `--type=s` (`build-q2sim`, `make install`, then `./rockboxui`). Screens can be captured headless with Xvfb and xdotool (keys need a 150 ms hold).
 
@@ -86,7 +86,7 @@ Next, in order:
 2. Done (2026-10-06), untested on the device: shutdown powers off for real. `shutdown_hw` already mutes and powers down the DAC (`audiohw_close`); `power_off` then sets the amp GPIOs PC20 and PE22 to 0 (`ioctl(/dev/gpio, 0x20004778, {pin, 1, "output0"})`, libhardware2's `gpio_set_func`), blanks the screen and runs `poweroff`. Only "Boot stock OS" still exits `0x51` (`q2_boot_stock`).
 3. Done (2026-10-06): `tools/shanlingq2/README`, "Installing a release", now starts from Q2 Pod V8.3; the dev loader is for a stock-only setup.
 4. A release of the port: a `rockbox.zip` on the fork's GitHub releases (a tag on `shanlingq2`), with install notes pointing to Q2 Pod V8.3.
-5. Optional: pause on headphone unplug (GPIO PA07/PA08); 375x320 layouts for the left-out plugins; USB storage from inside Rockbox (the dwc2 gadget has to be set up as stock does; `pc_link` stays 0 until then).
+5. Optional: 375x320 layouts for the left-out plugins; USB storage from inside Rockbox (the dwc2 gadget has to be set up as stock does; `pc_link` stays 0 until then).
 6. Announce in the Rockbox forums' New Ports board; later, upstream through Gerrit (the simulator build helps review).
 
 ## Verification

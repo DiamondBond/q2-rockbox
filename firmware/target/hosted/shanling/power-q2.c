@@ -57,17 +57,32 @@ unsigned int power_input_status(void)
 
 bool q2_boot_stock;
 
-/* the headphone amps off, as stock's into_poweroff does through libhardware2's
- * gpio_set_func: { pin, argument count, arguments } */
+/* /dev/gpio, as libhardware2's gpio_get_value and gpio_set_func use it */
+#define GPIO_SET_FUNC  0x20004778 /* arg: { pin, argument count, arguments } */
+#define GPIO_GET_VALUE 0x2000477a /* arg: the pin's name; returns its level */
+
+static int gpio(void)
+{
+    static int fd = -1;
+    if (fd < 0)
+        fd = open("/dev/gpio", O_RDWR | O_CLOEXEC);
+    return fd;
+}
+
+/* the 3.5 mm (PA07) and 4.4 mm (PA08) jacks, 1 = plugged, as stock's
+ * check_headset_status reads them */
+bool headphones_inserted(void)
+{
+    return gpio() >= 0 && (ioctl(gpio(), GPIO_GET_VALUE, "PA07") > 0 ||
+                           ioctl(gpio(), GPIO_GET_VALUE, "PA08") > 0);
+}
+
+/* the headphone amps off, as stock's into_poweroff does */
 void q2_amps_off(void)
 {
-    int fd = open("/dev/gpio", O_RDWR | O_CLOEXEC);
-    if (fd < 0)
-        return;
     const char *pins[] = { "PC20", "PE22" };
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 2 && gpio() >= 0; i++) {
         const void *arg[3] = { pins[i], (void *)1, "output0" };
-        ioctl(fd, 0x20004778, arg);
+        ioctl(gpio(), GPIO_SET_FUNC, arg);
     }
-    close(fd);
 }
