@@ -1,0 +1,105 @@
+Shanling Q2 (hosted) tools
+==========================
+
+The Q2 runs Linux 5.15 on an Ingenic X2000 (MIPS32r2, nan2008, FP64) with
+glibc 2.28. Rockbox runs hosted from the card, /mnt/mmc/.rockbox/rockbox, in
+place of the stock player (/release/bin/demo). The stock rootfs has no adb,
+telnet or ssh (only a getty on ttyS3), so the dev loader below is the way to
+run anything on the device.
+
+  mksysroot.sh  sysroot for clang: Debian buster mipsel headers (glibc 2.28,
+                Linux, alsa-lib; sha256-pinned) and the stock rootfs's libraries
+  crt.c         __start and the libc_nonshared wrappers; Debian's crt1.o and
+                libc_nonshared.a are legacy NaN, which ld.lld will not mix
+  hello.c       the M0 probe (Makefile builds it as "rockbox")
+  mkupdate.py   the dev loader update.tar
+
+All need the stock firmware ZIP, "Q2 Firmware V1.32.zip" (sha256 154c1782...).
+
+    ./mksysroot.sh 'Q2 Firmware V1.32.zip' ~/q2-sysroot
+    make SYSROOT=~/q2-sysroot
+    ./mkupdate.py 'Q2 Firmware V1.32.zip' /tmp/q2-loader
+
+Flash /tmp/q2-loader/update.tar from the card's root (System settings >
+System Update > TF card update), then copy the probe to .rockbox/rockbox on the
+card. Without that file the device boots as stock. The update's version is
+V1.3R, so stock V1.32 flashes back over it.
+
+Launcher contract (kept for the q2-pod boot hook)
+-------------------------------------------------
+S90play waits up to 3 s for /tmp/mmc_add (the card mounts asynchronously),
+runs /mnt/mmc/.rockbox/rockbox from that directory with stdout and stderr in
+rockbox.log there, appends "exit N", then execs /release/bin/demo. Exit 0x51
+means "boot the stock player"; the dev loader does that after any exit. Rockbox
+runs without demo's watchdog (checkappprocess.sh, started by demo) and without
+hciplayer (started by demo), so ALSA is free. A Rockbox that hangs keeps the
+stock UI away until the binary is removed with a card reader.
+
+Platform (reverse engineered from stock V1.32 demo)
+---------------------------------------------------
+demo passes product type 0x17 to initToolsModule and initMclModule; the notes
+below are that type's branches.
+
+platform_init (0x5120e4): checkappprocess.sh &; waits up to 2 s each for
+/dev/shanling_dac and /dev/mcu (40 x 50 ms: the drivers load in
+S11module_driver_default); initToolsModule (backlight PWM); initMclModule
+(opens /dev/shanling_dac O_RDWR, starts "nice -n -5 hciplayer -ao alsa &");
+buzzer_init: "cmd_mcu write_firmware /usr/data/libmcu-bare.bin", "cmd_mcu
+bootup", "cmd_mcu reset". The MCU (/dev/mcu) only drives the key-tone buzzer
+("cmd_mcu write_str buzzer"), so Rockbox can skip it. Jack detect: GPIO PA07
+(3.5 mm), PA08 (4.4 mm), 1 = plugged.
+
+Display: /dev/fb0 320x375, 32 bpp BGRA (red at 16), two pages panned with
+FBIOPAN_DISPLAY. The 375x320 landscape view is stored turned clockwise:
+landscape (x, y) is panel (319 - y, x), confirmed on the device. Screen off:
+FBIOBLANK 4; on: FBIOBLANK 0 then FBIOPAN_DISPLAY (enable_fb/disable_fb).
+
+Backlight: libhardware2 PWM, not sysfs. h = pwm_request("PC00");
+pwm_config(h, &{1, 0, 0, 10000, 111}) (five ints); pwm_set_level(h, level ?
+level + 10 : 0) (toolSetBackLight 0x5be20c). The backlight is already on at
+boot, so drawing works without touching the PWM.
+
+DAC: /dev/shanling_dac (codec_cs43131.ko, I2C bus 5), ALSA hw:1,0. ioctls take
+an int pointer:
+  0xc0044d1a  power, 1 on / 0 off (mclSetDacPwr; type 0x17 loads no FPGA)
+  0xc0044d1c  headset mode, 1 for the DAC output (config_outputchannel, before
+              power on)
+  0xc0044d00  volume (mclSetVol); scale to find in M2
+  0xc0044d1b  PCM mode, 0 (hciplayer, per PCM track)
+  0xc0044d1f  mute, 1 mute / 0 unmute (hciplayer: set on pause and close)
+  0xc0044d04  mclSetPcmMode; unused so far
+
+Keys: /dev/input/event1 (keyboard_gpio_add.ko, module_driver/*.sh):
+  evdev code               GPIO  button
+  116 KEY_POWER            PE31  wheel centre, also power (wakeup)
+  103 KEY_UP               PB18  Return
+  108 KEY_DOWN             PB17  Play/Pause
+  165 KEY_PREVIOUSSONG     PB16  side button, previous
+  163 KEY_NEXTSONG         PE26  side button, next
+(demo's map_key table at 0x77d1cc gives the stock meaning.)
+
+Wheel: a capacitive ring, /dev/input/event3 "hyn_sliderbar" (hyn_slider.ko,
+I2C bus 2). Plain evdev: ABS_X 1..200, the finger's position around the ring
+(wrapping 1 <-> 200), and ABS_PRESSURE 1 on touch, 0 on lift; reports every
+12 ms. demo reads it through tslib (ts.conf: input, pthres, dejitter, linear);
+encoderknob_thread_run (0x6256a0) wraps each delta into -100..100
+(get_direction 0x62587c) and ticks past 20 for a gesture's first step and 10
+after. event2 "hyn_ts" is the touchscreen (ABS_X 0..319, ABS_Y 0..374,
+ABS_PRESSURE; hyn_touch.ko), event0 "axp2101-pek" the PMIC's KEY_POWER (sent
+nothing in the probe run).
+
+Power off: into_poweroff stops playback, DAC power 0, GPIO PC20 = 0 and PE22 =
+0, stops Wi-Fi and Bluetooth; device_poweroff blanks the screen and runs
+"poweroff". Suspend: "echo mem > /sys/power/state".
+
+Battery: /sys/class/power_supply/battery is the AXP2101 PMIC (I2C bus 6);
+status reads "Charging". The cw2015 gauge is on I2C bus 0:
+/sys/devices/i2c-0/0-0062/cw2015_capacity (percent) and cw2015_voltage (mV)
+read 100 and 4346 on the charger; there is no cw2015_status (demo also probes
+other board revisions' paths). USB: dwc2 gadget,
+/sys/module/dwc2/parameters/pc_link. /sys/class/backlight is empty, as
+expected. The card is exFAT, mounted fmask=0000, so binaries on it run.
+
+Still to confirm on the device: which way round the wheel's ABS_X grows. The
+probe run's first turn, probably counter-clockwise, decreased it; M1 keeps the
+direction in one sign to flip if scrolling feels backwards.
