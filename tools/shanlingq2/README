@@ -57,6 +57,26 @@ runs without demo's watchdog (checkappprocess.sh, started by demo) and without
 hciplayer (started by demo), so ALSA is free. A Rockbox that hangs keeps the
 stock UI away until the binary is removed with a card reader.
 
+Q2 Pod V8.7's Home shortcut (Display > Shortcut: Rockbox) also starts Rockbox
+after demo: demo leaves /tmp/q2pod-rockbox, stops its watchdog and hciplayer
+and kills itself, and S90play runs Rockbox the same way, then demo again.
+
+Bluetooth
+---------
+demo starts rtk_hciattach, bluetoothd and bluealsa (bluez-alsa 4.0.0) with
+system("... &"), so they outlive it: a headset connected in Q2 Pod before the
+Home shortcut is still connected when Rockbox starts. audiohw_preinit
+(shanlingq2_codec.c) opens bluez-alsa's "bluealsa" PCM (20-bluealsa.conf: the
+most recently connected device, A2DP, through plug, which converts Rockbox's
+rate and S32 samples to the link's) and plays there when it opens, with the
+DAC left off; otherwise it is the DAC, as before. A cold boot has no bluealsa
+daemon, so the probe fails at once. The bluealsa PCM is an ioplug, which has no
+async callback, so pcm-alsa feeds it from a writer thread. If the headset goes
+away, the writer reopens on whatever audiohw_preinit then picks, the DAC.
+Rockbox's volume is its software volume in either case. bluealsa is Q2 Pod's
+patched one, which offers AAC at 48 kHz only (AirPods; see q2-pod's
+docs/internals.md, Bluetooth AAC).
+
 Platform (reverse engineered from stock V1.32 demo)
 ---------------------------------------------------
 demo passes product type 0x17 to initToolsModule and initMclModule; the notes

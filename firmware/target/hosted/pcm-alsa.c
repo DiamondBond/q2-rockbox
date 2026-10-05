@@ -28,6 +28,10 @@
  * To make the async callback safer, an alternative stack is installed, since
  * it's run from a signal hanlder (which otherwise uses the user stack).
  *
+ * A PCM with no async notification (an ioplug such as bluez-alsa's "bluealsa",
+ * whose async op is -ENOSYS) is fed by a writer thread instead: it polls the
+ * buffer and fills it under the same lock, as the callback would.
+ *
  * TODO: Rewrite this to properly use multithreading and/or direct mmap()
  */
 
@@ -57,6 +61,7 @@
 
 #include <pthread.h>
 #include <signal.h>
+#include <unistd.h>
 
 /* plughw:0,0 works with both, however "default" is recommended.
  * default doesnt seem to work with async callback but doesn't break
@@ -110,6 +115,13 @@ static snd_pcm_stream_t current_alsa_mode;  /* SND_PCM_STREAM_PLAYBACK / _CAPTUR
 #endif
 
 static const char *current_alsa_device;
+
+/* The writer thread (see the top), and whether playback is running: the
+ * writer fills only between sink_dma_start and sink_dma_stop */
+#define WRITER_POLL_US 5000
+static pthread_t writer;
+static volatile bool writer_run = false;
+static volatile bool dma_playing = false;
 
 void pcm_alsa_set_playback_device(const char *device)
 {
@@ -381,6 +393,55 @@ static bool copy_frames(bool first)
     return true;
 }
 
+/* Write whole periods while the buffer has room for them. Returns < 0 after an
+ * error that recovery could not undo. */
+static int playback_fill(snd_pcm_t *handle)
+{
+    int err;
+    snd_pcm_sframes_t avail;
+
+    while ((avail = snd_pcm_avail_update(handle)) >= period_size)
+    {
+        if (copy_frames(false))
+        {
+        retry:
+            err = snd_pcm_writei(handle, frames, period_size);
+            if (err == -EPIPE)
+            {
+                logf("mid underrun!");
+                xruns++;
+                err = snd_pcm_recover(handle, -EPIPE, 0);
+                if (err < 0) {
+                   logf("XRUN Recovery error: %s", snd_strerror(err));
+                   return err;
+                }
+                goto retry;
+            }
+            else if (err != period_size)
+            {
+                logf("Write error: written %i expected %li", err, period_size);
+                if (err < 0 && err != -EAGAIN && snd_pcm_recover(handle, err, 1) < 0)
+                    return err;
+                break;
+            }
+        }
+        else
+        {
+            logf("%s: No Data.", __func__);
+            break;
+        }
+    }
+
+    if (avail < 0 && avail != -EAGAIN)
+    {
+        err = snd_pcm_recover(handle, avail, 1);
+        if (err < 0)
+            return err;
+    }
+
+    return 0;
+}
+
 static void async_callback(snd_async_handler_t *ahandler)
 {
     int err;
@@ -420,35 +481,8 @@ static void async_callback(snd_async_handler_t *ahandler)
     if (current_alsa_mode == SND_PCM_STREAM_PLAYBACK)
     {
 #endif
-        while (snd_pcm_avail_update(handle) >= period_size)
-        {
-            if (copy_frames(false))
-            {
-            retry:
-                err = snd_pcm_writei(handle, frames, period_size);
-                if (err == -EPIPE)
-                {
-                    logf("mid underrun!");
-                    xruns++;
-                    err = snd_pcm_recover(handle, -EPIPE, 0);
-                    if (err < 0) {
-                       logf("XRUN Recovery error: %s", snd_strerror(err));
-                       goto abort;
-                    }
-                    goto retry;
-                }
-                else if (err != period_size)
-                {
-                    logf("Write error: written %i expected %li", err, period_size);
-                    break;
-                }
-            }
-            else
-            {
-                logf("%s: No Data (%d).", __func__, state);
-                break;
-            }
-        }
+        if (playback_fill(handle) < 0)
+            goto abort;
 #ifdef HAVE_RECORDING
     }
     else if (current_alsa_mode == SND_PCM_STREAM_CAPTURE)
@@ -497,9 +531,113 @@ abort:
     pthread_mutex_unlock(&pcm_mtx);
 }
 
+/* The writer lost its PCM (a Bluetooth headset that went away): the target
+ * picks a device again in audiohw_preinit, and the writer carries on there at
+ * the same rate. Called with pcm_mtx held; returns < 0 if nothing opened. */
+static int writer_reopen(void)
+{
+    int err;
+
+    logf("PCM device lost, reopening");
+    if (handle)
+        snd_pcm_close(handle);
+    handle = NULL;
+    current_alsa_device = NULL;
+
+    audiohw_preinit();
+    err = snd_pcm_open(&handle, playback_dev, SND_PCM_STREAM_PLAYBACK, 0);
+    if (err < 0)
+    {
+        logf("Cannot open device %s: %s", playback_dev, snd_strerror(err));
+        handle = NULL;
+        return err;
+    }
+    current_alsa_device = playback_dev;
+    if (last_sample_rate)
+    {
+        set_hwparams(handle, last_sample_rate);
+        set_swparams(handle);
+    }
+    return 0;
+}
+
+static void *writer_main(void *arg)
+{
+    (void)arg;
+
+    while (writer_run)
+    {
+        int err = 0;
+        bool lost = false;
+
+        pthread_mutex_lock(&pcm_mtx);
+        if (dma_playing && handle)
+        {
+            snd_pcm_state_t state = snd_pcm_state(handle);
+
+            if (state == SND_PCM_STATE_XRUN)
+            {
+                xruns++;
+                err = snd_pcm_recover(handle, -EPIPE, 0);
+            }
+            else if (state == SND_PCM_STATE_DISCONNECTED)
+                err = -ENODEV;
+
+            if (err >= 0 && state != SND_PCM_STATE_DRAINING &&
+                state != SND_PCM_STATE_SETUP)
+                err = playback_fill(handle);
+
+            /* playback_fill may have stopped playback (no more data) */
+            if (err >= 0 && dma_playing &&
+                snd_pcm_state(handle) == SND_PCM_STATE_PREPARED)
+                snd_pcm_start(handle);
+
+            lost = err < 0;
+        }
+        else
+            lost = dma_playing && !handle;
+
+        if (lost)
+            lost = writer_reopen() < 0;
+        pthread_mutex_unlock(&pcm_mtx);
+
+        /* a device that will not open is tried again each second */
+        usleep(lost ? 1000000 : WRITER_POLL_US);
+    }
+    return NULL;
+}
+
+/* The writer runs with every signal blocked: Rockbox's own (its tick, SIGIO)
+ * belong to the main thread. */
+static void writer_start(void)
+{
+    sigset_t all, old;
+    int err;
+
+    if (writer_run)
+        return;
+    writer_run = true;
+    sigfillset(&all);
+    pthread_sigmask(SIG_BLOCK, &all, &old);
+    err = pthread_create(&writer, NULL, writer_main, NULL);
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+    if (err)
+        panicf("Unable to start the PCM writer: %s", strerror(err));
+}
+
+static void writer_stop(void)
+{
+    if (!writer_run)
+        return;
+    writer_run = false;
+    pthread_join(writer, NULL);
+}
+
 static void close_hwdev(void)
 {
     logf("closedev (%p)", handle);
+
+    writer_stop();
 
     if (handle) {
         snd_pcm_drain(handle);
@@ -574,16 +712,21 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
     err = snd_async_add_pcm_handler(&ahandler, handle, async_callback, NULL);
     if (err < 0)
     {
-        panicf("Unable to register async handler: %s", snd_strerror(err));
+        /* no async notification on this PCM (an ioplug): the writer feeds it */
+        logf("No async handler (%s): writer thread", snd_strerror(err));
+        ahandler = NULL;
+        writer_start();
     }
-
-    /* only modify the stack the handler runs on */
-    sigaction(SIGIO, NULL, &sa);
-    sa.sa_flags |= SA_ONSTACK;
-    err = sigaction(SIGIO, &sa, NULL);
-    if (err < 0)
+    else
     {
-        panicf("Unable to install alternative signal stack: %s", strerror(err));
+        /* only modify the stack the handler runs on */
+        sigaction(SIGIO, NULL, &sa);
+        sa.sa_flags |= SA_ONSTACK;
+        err = sigaction(SIGIO, &sa, NULL);
+        if (err < 0)
+        {
+            panicf("Unable to install alternative signal stack: %s", strerror(err));
+        }
     }
 
 #ifdef HAVE_RECORDING
@@ -623,6 +766,12 @@ static void sink_set_freq_nolock(uint16_t freq)
 
     logf("PCM DMA Settings %d %lu", last_sample_rate, sampr);
 
+    if (!handle) /* the writer reopens it at this rate */
+    {
+        last_sample_rate = sampr;
+        return;
+    }
+
     if (last_sample_rate != sampr)
     {
         last_sample_rate = sampr;
@@ -652,6 +801,10 @@ static void sink_set_freq(uint16_t freq)
 
 static void sink_dma_stop(void)
 {
+    dma_playing = false;
+    if (!handle)
+        return;
+
     logf("PCM DMA stop (%d)", snd_pcm_state(handle));
 
     int err = snd_pcm_drain(handle);
@@ -669,6 +822,9 @@ static void sink_dma_start(const void *addr, size_t size)
 
     pcm_data = addr;
     pcm_size = size;
+    dma_playing = true;
+    if (!handle) /* the writer reopens it */
+        return;
 
 #if !defined(AUDIOHW_MUTE_ON_STOP) && defined(AUDIOHW_MUTE_ON_SRATE_CHANGE)
     audiohw_mute(false);

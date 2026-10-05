@@ -23,7 +23,16 @@
  * 0 dB step and Rockbox's volume is all in pcm-alsa's 32-bit mixer.
  * ponytail: the DAC's own steps (0.5 dB from about -38 dB up, coarser below,
  * per the driver's tables) could take the coarse part, as fiiolinux_codec.c
- * does, if the noise floor at low volume ever matters. */
+ * does, if the noise floor at low volume ever matters.
+ *
+ * Bluetooth: Q2 Pod starts Rockbox from its Home menu with the headset it
+ * connected still connected (its daemons outlive the stock player), so a
+ * headset that bluez-alsa's "bluealsa" PCM opens on is the output, and the DAC
+ * stays off. "bluealsa" is the most recently connected device through plug,
+ * which converts Rockbox's rate and 32-bit samples to the link's. pcm-alsa
+ * feeds it from a thread (it has no async callback), and falls back here,
+ * to the DAC, when the headset goes away. */
+#include <alsa/asoundlib.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -38,7 +47,11 @@
 #define DAC_MUTE     0xc0044d1f
 #define DAC_GAIN     0xc0044d0d /* 1 high, 0 low (mclSetGainMode) */
 
+#define DAC_DEVICE "plughw:0,0" /* pcm-alsa's default */
+#define BT_DEVICE  "bluealsa"   /* bluez-alsa's 20-bluealsa.conf */
+
 static int dac = -1;
+static int gain = 0;
 static int muted = -1;
 static int vol[2] = { -1000, -1000 }; /* silent until Rockbox sets its volume */
 
@@ -48,8 +61,26 @@ static void dac_set(unsigned long req, int v)
         ioctl(dac, req, &v);
 }
 
+/* A headset bluez-alsa has a PCM for; no daemon (a cold boot) fails at once */
+static bool bt_connected(void)
+{
+    snd_pcm_t *pcm;
+    if (snd_pcm_open(&pcm, BT_DEVICE, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) < 0)
+        return false;
+    snd_pcm_close(pcm);
+    return true;
+}
+
+/* pcm-alsa calls this before opening the PCM, and again when the headset is
+ * lost, to choose the device again */
 void audiohw_preinit(void)
 {
+    if (bt_connected()) {
+        pcm_alsa_set_playback_device(BT_DEVICE);
+        audiohw_mute(false);
+        return;
+    }
+    pcm_alsa_set_playback_device(DAC_DEVICE);
     /* the driver loads in S11; stock waits up to 2 s for the node */
     for (int i = 0; i < 40 && dac < 0; i++) {
         dac = open("/dev/shanling_dac", O_RDWR | O_CLOEXEC);
@@ -60,6 +91,9 @@ void audiohw_preinit(void)
     dac_set(DAC_POWER, 1);
     dac_set(DAC_PCM, 0);
     dac_set(DAC_VOLUME, 100 << 8 | 100);
+    dac_set(DAC_GAIN, gain);
+    if (muted >= 0)
+        dac_set(DAC_MUTE, muted); /* a later call: the DAC's own state */
     audiohw_mute(false);
 }
 
@@ -103,5 +137,6 @@ void audiohw_mute(int mute)
 
 void audiohw_set_power_mode(int mode)
 {
-    dac_set(DAC_GAIN, mode == SOUND_HIGH_POWER);
+    gain = mode == SOUND_HIGH_POWER;
+    dac_set(DAC_GAIN, gain);
 }
