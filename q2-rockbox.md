@@ -77,7 +77,13 @@ Done since (M3, M4):
 - M4: fb0 double-buffered in `lcd-q2.c` (draw the hidden page, pan, wait for vsync, copy to the other page). cabbiev2 for 375x320: a WPS, and an SBS made the Q2's default (`DEFAULT_SBSNAME`) with battery, clock and volume inside the glass and the lists' viewport; backdrops recomposed from the 400x240 ones. Plugins without a 375x320 layout stay left out. Install notes are in `tools/shanlingq2/README`.
 - A simulator build works: `Q2_SYSROOT` isn't needed with `--type=s` (`build-q2sim`, `make install`, then `./rockboxui`). Screens can be captured headless with Xvfb and xdotool (keys need a 150 ms hold).
 
-Final test passed on the device (2026-10-05): no tearing, theme, battery %, Boot stock OS. Remaining: commit and push.
+Final test passed on the device (2026-10-05): no tearing, theme, battery %, Boot stock OS. Committed and pushed (`b7a4e3a860`).
+
+Next, in order:
+1. Check on the device: the wake-up fix (the first key or wheel touch on a dark screen only lights it; installed, untested) and the Gain switch (M2, untested).
+2. Part A (in q2-ringnav): the q2-pod boot hook, so Q2 Pod and Rockbox share the device (hold Play at power-on to switch, the last choice remembered). The card keeps q2-pod's `update.tar` until then.
+3. Optional: pause on headphone unplug (GPIO PA07/PA08); 375x320 layouts for the left-out plugins; USB storage from inside Rockbox.
+4. Announce in the Rockbox forums' New Ports board; later, upstream through Gerrit (the simulator build helps review).
 
 ## Verification
 
