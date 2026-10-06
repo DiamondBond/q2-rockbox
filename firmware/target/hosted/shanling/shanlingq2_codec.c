@@ -38,6 +38,7 @@
 #include <unistd.h>
 #include "config.h"
 #include "audiohw.h"
+#include "button.h"
 #include "pcm-alsa.h"
 
 #define DAC_VOLUME   0xc0044d00 /* left << 8 | right, each 0..100 (0 dB) */
@@ -51,6 +52,7 @@
 #define DAC_DEVICE "plughw:0,0" /* pcm-alsa's default */
 #define BT_DEVICE  "bluealsa"   /* bluez-alsa's 20-bluealsa.conf */
 
+static bool bluetooth_output;
 static int dac = -1;
 static int gain = 0;
 static int filter = 0;
@@ -73,11 +75,22 @@ static bool bt_connected(void)
     return true;
 }
 
+/* Called once per second by the PCM writer, under its lock. Avoid opening a
+ * second Bluetooth PCM while it is already in use. */
+bool audiohw_output_changed(void)
+{
+    if (bluetooth_output)
+        return headphones_inserted();
+    return !headphones_inserted() && bt_connected();
+}
+
 /* pcm-alsa calls this before opening the PCM, and again when the headset is
  * lost, to choose the device again */
 void audiohw_preinit(void)
 {
-    if (bt_connected()) {
+    bluetooth_output = !headphones_inserted() && bt_connected();
+    if (bluetooth_output) {
+        dac_set(DAC_POWER, 0);
         pcm_alsa_set_playback_device(BT_DEVICE);
         audiohw_mute(false);
         return;

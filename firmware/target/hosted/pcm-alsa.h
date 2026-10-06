@@ -36,6 +36,10 @@ void pcm_alsa_set_playback_device(const char *device);
 void pcm_alsa_set_capture_device(const char *device);
 #endif
 
+#ifdef SHANLING_Q2
+bool audiohw_output_changed(void);
+#endif
+
 unsigned int pcm_alsa_get_rate(void);
 unsigned int pcm_alsa_get_xruns(void);
 
