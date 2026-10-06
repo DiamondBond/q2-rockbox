@@ -117,6 +117,11 @@ an int pointer:
               the CS43131 register, -0.5 dB a step: 100 is 0 dB, 1 about
               -84 dB, 0.5 dB steps from about -38 dB up, 0 mute
   0xc0044d0d  gain, 1 high / 0 low (mclSetGainMode, stock's Gain)
+  0xc0044d19  filter, 0 fast / 1 slow / 2 low-delay fast / 3 low-delay slow
+              (mclSetFilter at 0x5adf2c; codec_cs43131_ioctl rejects >= 4).
+              Sound Settings > DAC filter roll-off exposes these as Sharp,
+              Slow, Short Sharp, Short Slow. Saved by Rockbox and reapplied
+              when opening the DAC, including fallback from Bluetooth.
   0xc0044d1b  PCM mode, 0 (hciplayer, per PCM track)
   0xc0044d1f  mute, 1 mute / 0 unmute (hciplayer: set on pause and close)
   0xc0044d04  mclSetPcmMode; unused so far

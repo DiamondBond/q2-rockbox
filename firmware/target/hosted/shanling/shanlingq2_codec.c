@@ -46,12 +46,14 @@
 #define DAC_PCM      0xc0044d1b /* 0: PCM, not DSD */
 #define DAC_MUTE     0xc0044d1f
 #define DAC_GAIN     0xc0044d0d /* 1 high, 0 low (mclSetGainMode) */
+#define DAC_FILTER   0xc0044d19 /* fast, slow, low-delay fast, low-delay slow */
 
 #define DAC_DEVICE "plughw:0,0" /* pcm-alsa's default */
 #define BT_DEVICE  "bluealsa"   /* bluez-alsa's 20-bluealsa.conf */
 
 static int dac = -1;
 static int gain = 0;
+static int filter = 0;
 static int muted = -1;
 static int vol[2] = { -1000, -1000 }; /* silent until Rockbox sets its volume */
 
@@ -92,6 +94,7 @@ void audiohw_preinit(void)
     dac_set(DAC_PCM, 0);
     dac_set(DAC_VOLUME, 100 << 8 | 100);
     dac_set(DAC_GAIN, gain);
+    dac_set(DAC_FILTER, filter);
     if (muted >= 0)
         dac_set(DAC_MUTE, muted); /* a later call: the DAC's own state */
     audiohw_mute(false);
@@ -139,4 +142,12 @@ void audiohw_set_power_mode(int mode)
 {
     gain = mode == SOUND_HIGH_POWER;
     dac_set(DAC_GAIN, gain);
+}
+
+void audiohw_set_filter_roll_off(int value)
+{
+    if ((unsigned)value > 3)
+        return;
+    filter = value;
+    dac_set(DAC_FILTER, filter);
 }
