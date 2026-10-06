@@ -442,7 +442,6 @@ static int playback_fill(snd_pcm_t *handle)
     return 0;
 }
 
-#ifndef SHANLING_Q2
 static void async_callback(snd_async_handler_t *ahandler)
 {
     int err;
@@ -532,8 +531,6 @@ abort:
     pthread_mutex_unlock(&pcm_mtx);
 }
 
-#endif /* !SHANLING_Q2 */
-
 /* The writer lost its PCM (a Bluetooth headset that went away): the target
  * picks a device again in audiohw_preinit, and the writer carries on there at
  * the same rate. Called with pcm_mtx held; returns < 0 if nothing opened. */
@@ -568,9 +565,6 @@ static void *writer_main(void *arg)
 {
     (void)arg;
 
-#ifdef SHANLING_Q2
-    long next_output_check = current_tick;
-#endif
     while (writer_run)
     {
         int err = 0;
@@ -603,13 +597,6 @@ static void *writer_main(void *arg)
         else
             lost = dma_playing && !handle;
 
-#ifdef SHANLING_Q2
-        if (!TIME_BEFORE(current_tick, next_output_check))
-        {
-            next_output_check = current_tick + HZ;
-            lost = audiohw_output_changed() || lost;
-        }
-#endif
         if (lost)
             lost = writer_reopen() < 0;
         pthread_mutex_unlock(&pcm_mtx);
@@ -722,12 +709,7 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
         panicf("Unable to install alternative signal stack: %s", strerror(err));
     }
 
-#ifdef SHANLING_Q2
-    /* The writer also handles late Bluetooth connections and jack priority. */
-    err = -ENOSYS;
-#else
     err = snd_async_add_pcm_handler(&ahandler, handle, async_callback, NULL);
-#endif
     if (err < 0)
     {
         /* no async notification on this PCM (an ioplug): the writer feeds it */

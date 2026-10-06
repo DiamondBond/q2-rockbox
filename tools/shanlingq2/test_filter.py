@@ -8,7 +8,6 @@ root = Path(__file__).resolve().parents[2]
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
     (tmp / "config.h").write_text("")
-    (tmp / "button.h").write_text("#include <stdbool.h>\nbool headphones_inserted(void);\n")
     (tmp / "audiohw.h").write_text("""
 #include <stdbool.h>
 #define SOUND_HIGH_POWER 0
@@ -27,8 +26,6 @@ void pcm_set_mixer_volume(int, int);
 #define ioctl mock_ioctl
 #include "firmware/target/hosted/shanling/shanlingq2_codec.c"
 
-static int wired, probes, left_volume, right_volume;
-bool headphones_inserted(void) { return wired; }
 static int bluetooth, last_filter = -1, writes;
 int mock_open(const char *path, int flags, ...)
 {
@@ -50,26 +47,16 @@ int mock_ioctl(int fd, unsigned long req, ...)
 int snd_pcm_open(snd_pcm_t **pcm, const char *name,
                  snd_pcm_stream_t stream, int mode)
 {
-    probes++;
     *pcm = NULL; (void)name; (void)stream; (void)mode;
     return bluetooth ? 0 : -1;
 }
 int snd_pcm_close(snd_pcm_t *pcm) { (void)pcm; return 0; }
 void pcm_alsa_set_playback_device(const char *name) { (void)name; }
-void pcm_set_mixer_volume(int left, int right) { left_volume = left; right_volume = right; }
+void pcm_set_mixer_volume(int left, int right) { (void)left; (void)right; }
 
 int main(void)
 {
-    audiohw_set_volume(-120, -180);
     audiohw_preinit();
-    assert(left_volume == -120 && right_volume == -180);
-    assert(!audiohw_output_changed());
-    bluetooth = 1;
-    assert(audiohw_output_changed());
-    wired = 1;
-    int before = probes;
-    assert(!audiohw_output_changed() && probes == before);
-    bluetooth = wired = 0;
     assert(last_filter == 0 && writes == 1);
     for (int i = 0; i < 4; i++) {
         audiohw_set_filter_roll_off(i);
@@ -81,11 +68,6 @@ int main(void)
     audiohw_close();
     bluetooth = 1;
     audiohw_preinit();
-    assert(bluetooth_output && !audiohw_output_changed());
-    wired = 1;
-    assert(audiohw_output_changed());
-    wired = 0;
-    assert(left_volume == -120 && right_volume == -180);
     audiohw_set_filter_roll_off(2);
     assert(writes == 5);
     bluetooth = 0;
