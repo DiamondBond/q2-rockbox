@@ -25,6 +25,7 @@
 #include "pcm-internal.h"
 #include "pcm_mixer.h"
 #include "pcm_sampr.h"
+#include "dsp-util.h"
 
 /* Channels use standard-style PCM callback interface but a latency of one
    frame by double-buffering is introduced in order to facilitate mixing and
@@ -46,6 +47,7 @@ struct mixer_channel
     const struct mixer_play_cbs* play_cbs;  /* Registered callbacks */
     enum channel_status status;             /* Playback status */
     uint32_t amplitude;                     /* Amp. factor: 0x0000 = mute, 0x10000 = unity */
+    uint32_t current_amplitude;             /* Gain of the last emitted sample */
     const struct mixer_buffer_cbs* buf_cbs; /* Callback for new buffer */
 };
 
@@ -90,6 +92,30 @@ static inline unsigned int max_idle_frames(void)
 #include "asm/pcm-mixer.c"
 
 /** Private generic routines **/
+
+/* Use a sample ramp when a channel gain changes; steady gains use the
+   optimized routines below. Stereo pairs always share the same gain. */
+static void mixer_write_ramp(int16_t *out, struct mixer_channel *chan,
+                             size_t size, bool add)
+{
+    const int16_t *src = chan->start;
+    int32_t amp = chan->current_amplitude;
+    const int32_t target = chan->amplitude;
+    for (size_t left = size / 4; left > 0; left--)
+    {
+        amp += (target - amp) / (int32_t)left;
+        int32_t l = *src++ * amp >> 16;
+        int32_t r = *src++ * amp >> 16;
+        if (add)
+        {
+            l += out[0];
+            r += out[1];
+        }
+        *out++ = clip_sample_16(l);
+        *out++ = clip_sample_16(r);
+    }
+    chan->current_amplitude = amp;
+}
 
 /* Mark channel active to mix its data */
 static void mixer_activate_channel(struct mixer_channel *chan)
@@ -150,6 +176,7 @@ mixer_buffer_callback(enum pcm_dma_status status)
     /* "Loop" back here if one round wasn't enough to fill a frame */
 fill_frame:
     chan_p = active_channels;
+    bool ramp = false;
 
     while (*chan_p)
     {
@@ -185,6 +212,7 @@ fill_frame:
         if (chan->size < mixsize)
             mixsize = chan->size;
 
+        ramp |= chan->current_amplitude != chan->amplitude;
         chan_p++;
     }
 
@@ -195,7 +223,20 @@ fill_frame:
     {
         struct mixer_channel *chan = *chan_p++;
 
-        if (LIKELY(!*chan_p))
+        if (ramp)
+        {
+            bool add = false;
+            while (1)
+            {
+                mixer_write_ramp(mixptr, chan, mixsize, add);
+                chan->last_size = mixsize;
+                if (!*chan_p)
+                    break;
+                chan = *chan_p++;
+                add = true;
+            }
+        }
+        else if (LIKELY(!*chan_p))
         {
             write_samples(mixptr, chan->start, chan->amplitude, mixsize);
         }
@@ -444,7 +485,11 @@ bool mixer_switch_sink(enum pcm_sink_ids sink)
 void mixer_channel_set_amplitude(enum pcm_mixer_channel channel,
                                  unsigned int amplitude)
 {
+    pcm_play_lock();
     channels[channel].amplitude = MIN(amplitude, MIX_AMP_UNITY);
+    if (channels[channel].status != CHANNEL_PLAYING)
+        channels[channel].current_amplitude = channels[channel].amplitude;
+    pcm_play_unlock();
 }
 
 /* Return channel's playback status */

@@ -284,11 +284,29 @@ error:
 /* Multiplicative factors applied to each sample */
 static int32_t dig_vol_mult_l = 0;
 static int32_t dig_vol_mult_r = 0;
+static int32_t dig_vol_current_l = 0;
+static int32_t dig_vol_current_r = 0;
 
 void pcm_set_mixer_volume(int vol_db_l, int vol_db_r)
 {
     dig_vol_mult_l = fp_factor(fp_div(vol_db_l, 10, 16), 16);
     dig_vol_mult_r = fp_factor(fp_div(vol_db_r, 10, 16), 16);
+}
+
+/* Ramp from the last emitted gain, keeping both channels on the same envelope. */
+static void scale_frames(sample_t *dst, const int16_t *src, size_t count)
+{
+    const int32_t target_l = dig_vol_mult_l;
+    const int32_t target_r = dig_vol_mult_r;
+    for (size_t left = count; left > 0; left--)
+    {
+        if (dig_vol_current_l != target_l)
+            dig_vol_current_l += (target_l - dig_vol_current_l) / (int32_t)left;
+        if (dig_vol_current_r != target_r)
+            dig_vol_current_r += (target_r - dig_vol_current_r) / (int32_t)left;
+        *dst++ = *src++ * dig_vol_current_l + PCM_DC_OFFSET_VALUE;
+        *dst++ = *src++ * dig_vol_current_r + PCM_DC_OFFSET_VALUE;
+    }
 }
 #endif
 
@@ -344,11 +362,7 @@ static bool copy_frames(bool first)
                  * sample by some value so the sound is not too low */
                 const int16_t *pcm_ptr = pcm_data;
                 sample_t *sample_ptr = &frames[2*(period_size-frames_left)];
-                for (int i = 0; i < nframes; i++)
-                {
-                    *sample_ptr++ = (*pcm_ptr++ * dig_vol_mult_l) + PCM_DC_OFFSET_VALUE;
-                    *sample_ptr++ = (*pcm_ptr++ * dig_vol_mult_r) + PCM_DC_OFFSET_VALUE;
-                }
+                scale_frames(sample_ptr, pcm_ptr, nframes);
             }
             else
 #endif
