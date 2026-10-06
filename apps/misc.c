@@ -652,6 +652,17 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
 #if CONFIG_PLATFORM & (PLATFORM_ANDROID)
     static bool resume = false;
 #endif
+#ifdef SHANLING_Q2
+    /* The Q2 wheel's dark-screen gesture arrives as multimedia volume keys.
+     * Advanced Key Lock with "Exempt Volume" off keeps the pocket gesture
+     * from changing the volume, the same way it filters wheel actions. */
+    if ((event & (BUTTON_MULTIMEDIA_VOLUME_UP |
+                  BUTTON_MULTIMEDIA_VOLUME_DOWN)) &&
+        global_settings.bt_selective_softlock_actions &&
+        !(global_settings.bt_selective_softlock_actions_mask &
+          SEL_ACTION_VOL))
+        return event;
+#endif
 
     switch(event)
     {
