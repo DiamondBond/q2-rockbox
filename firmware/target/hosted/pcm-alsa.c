@@ -96,6 +96,7 @@ static snd_pcm_t *handle = NULL;
 static snd_pcm_sframes_t buffer_size;
 static snd_pcm_sframes_t period_size;
 static sample_t *frames = NULL;
+static snd_pcm_sframes_t pending_frames, frame_offset;
 
 static const void  *pcm_data = 0;
 static size_t       pcm_size = 0;
@@ -120,7 +121,7 @@ static const char *current_alsa_device;
  * writer fills only between sink_dma_start and sink_dma_stop */
 #define WRITER_POLL_US 5000
 static pthread_t writer;
-static volatile bool writer_run = false;
+static bool writer_run = false;
 static volatile bool dma_playing = false;
 
 void pcm_alsa_set_playback_device(const char *device)
@@ -222,6 +223,9 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
 
     if (frames) free(frames);
     frames = calloc(1, period_size * channels * sizeof(sample_t));
+    if (!frames)
+        panicf("Cannot allocate PCM buffer");
+    pending_frames = frame_offset = 0;
 
     /* write the parameters to device */
     err = snd_pcm_hw_params(handle, params);
@@ -407,52 +411,44 @@ static bool copy_frames(bool first)
     return true;
 }
 
-/* Write whole periods while the buffer has room for them. Returns < 0 after an
- * error that recovery could not undo. */
-static int playback_fill(snd_pcm_t *handle)
+/* Keep an unwritten tail across short writes and EAGAIN: copy_frames has
+ * already consumed those samples from Rockbox's buffer. */
+static int playback_fill(snd_pcm_t *handle, bool first)
 {
-    int err;
     snd_pcm_sframes_t avail;
 
     while ((avail = snd_pcm_avail_update(handle)) >= period_size)
     {
-        if (copy_frames(false))
+        if (!pending_frames)
         {
-        retry:
-            err = snd_pcm_writei(handle, frames, period_size);
-            if (err == -EPIPE)
-            {
-                logf("mid underrun!");
-                xruns++;
-                err = snd_pcm_recover(handle, -EPIPE, 0);
-                if (err < 0) {
-                   logf("XRUN Recovery error: %s", snd_strerror(err));
-                   return err;
-                }
-                goto retry;
-            }
-            else if (err != period_size)
-            {
-                logf("Write error: written %i expected %li", err, period_size);
-                if (err < 0 && err != -EAGAIN && snd_pcm_recover(handle, err, 1) < 0)
-                    return err;
+            if (!copy_frames(first))
                 break;
-            }
+            pending_frames = period_size;
+            frame_offset = 0;
         }
+        int err = snd_pcm_writei(handle, frames + frame_offset * channels,
+                                 pending_frames);
+        if (err > 0)
+        {
+            pending_frames -= err;
+            frame_offset += err;
+        }
+        else if (!err || err == -EAGAIN)
+            break;
         else
         {
-            logf("%s: No Data.", __func__);
+            if (err == -EPIPE)
+                xruns++;
+            int recovered = snd_pcm_recover(handle, err, 1);
+            if (recovered < 0)
+                return recovered;
+            /* Retry on the next callback, so a broken device cannot spin. */
             break;
         }
     }
 
     if (avail < 0 && avail != -EAGAIN)
-    {
-        err = snd_pcm_recover(handle, avail, 1);
-        if (err < 0)
-            return err;
-    }
-
+        return snd_pcm_recover(handle, avail, 1);
     return 0;
 }
 
@@ -495,7 +491,7 @@ static void async_callback(snd_async_handler_t *ahandler)
     if (current_alsa_mode == SND_PCM_STREAM_PLAYBACK)
     {
 #endif
-        if (playback_fill(handle) < 0)
+        if (playback_fill(handle, false) < 0)
             goto abort;
 #ifdef HAVE_RECORDING
     }
@@ -569,8 +565,15 @@ static int writer_reopen(void)
     current_alsa_device = playback_dev;
     if (last_sample_rate)
     {
-        set_hwparams(handle, last_sample_rate);
-        set_swparams(handle);
+        err = set_hwparams(handle, last_sample_rate);
+        if (err >= 0)
+            err = set_swparams(handle);
+        if (err < 0) {
+            snd_pcm_close(handle);
+            handle = NULL;
+            current_alsa_device = NULL;
+            return err;
+        }
     }
     return 0;
 }
@@ -579,10 +582,10 @@ static void *writer_main(void *arg)
 {
     (void)arg;
 
-    while (writer_run)
+    while (__atomic_load_n(&writer_run, __ATOMIC_ACQUIRE))
     {
         int err = 0;
-        bool lost = false;
+        bool lost = false, playing;
 
         pthread_mutex_lock(&pcm_mtx);
         if (dma_playing && handle)
@@ -599,12 +602,12 @@ static void *writer_main(void *arg)
 
             if (err >= 0 && state != SND_PCM_STATE_DRAINING &&
                 state != SND_PCM_STATE_SETUP)
-                err = playback_fill(handle);
+                err = playback_fill(handle, false);
 
             /* playback_fill may have stopped playback (no more data) */
             if (err >= 0 && dma_playing &&
                 snd_pcm_state(handle) == SND_PCM_STATE_PREPARED)
-                snd_pcm_start(handle);
+                err = snd_pcm_start(handle);
 
             lost = err < 0;
         }
@@ -613,10 +616,11 @@ static void *writer_main(void *arg)
 
         if (lost)
             lost = writer_reopen() < 0;
+        playing = dma_playing;
         pthread_mutex_unlock(&pcm_mtx);
 
         /* a device that will not open is tried again each second */
-        usleep(lost ? 1000000 : WRITER_POLL_US);
+        usleep(lost ? 1000000 : playing ? WRITER_POLL_US : 100000);
     }
     return NULL;
 }
@@ -628,9 +632,9 @@ static void writer_start(void)
     sigset_t all, old;
     int err;
 
-    if (writer_run)
+    if (__atomic_load_n(&writer_run, __ATOMIC_ACQUIRE))
         return;
-    writer_run = true;
+    __atomic_store_n(&writer_run, true, __ATOMIC_RELEASE);
     sigfillset(&all);
     pthread_sigmask(SIG_BLOCK, &all, &old);
     err = pthread_create(&writer, NULL, writer_main, NULL);
@@ -641,9 +645,9 @@ static void writer_start(void)
 
 static void writer_stop(void)
 {
-    if (!writer_run)
+    if (!__atomic_load_n(&writer_run, __ATOMIC_ACQUIRE))
         return;
-    writer_run = false;
+    __atomic_store_n(&writer_run, false, __ATOMIC_RELEASE);
     pthread_join(writer, NULL);
 }
 
@@ -675,9 +679,9 @@ static void close_hwdev(void)
 
 static void alsadev_cleanup(void)
 {
+    close_hwdev(); /* stop the writer before releasing its buffer */
     free(frames);
     frames = NULL;
-    close_hwdev();
 }
 
 static void open_hwdev(const char *device, snd_pcm_stream_t mode)
@@ -704,10 +708,16 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
     }
     last_sample_rate = 0;
 
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    pthread_mutex_init(&pcm_mtx, &attr);
+    static bool initialized;
+    if (!initialized) {
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&pcm_mtx, &attr);
+        pthread_mutexattr_destroy(&attr);
+        atexit(alsadev_cleanup);
+        initialized = true;
+    }
 
     /* assign alternative stack for the signal handlers */
     stack_t ss = {
@@ -749,8 +759,6 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
     (void)mode;
 #endif
     current_alsa_device = device;
-
-    atexit(alsadev_cleanup);
 }
 
 static void sink_dma_init(void)
@@ -816,6 +824,7 @@ static void sink_set_freq(uint16_t freq)
 static void sink_dma_stop(void)
 {
     dma_playing = false;
+    pending_frames = frame_offset = 0;
     if (!handle)
         return;
 
@@ -823,8 +832,7 @@ static void sink_dma_stop(void)
 
     int err = snd_pcm_drain(handle);
     if (err < 0)
-        if (err < 0)
-            logf("Drain failed: %s", snd_strerror(err));
+        logf("Drain failed: %s", snd_strerror(err));
 #ifdef AUDIOHW_MUTE_ON_STOP
     audiohw_mute(true);
 #endif
@@ -860,60 +868,38 @@ static void sink_dma_start(const void *addr, size_t size)
             {
                 logf("Trying to recover from underrun");
                 int err = snd_pcm_recover(handle, -EPIPE, 0);
-                if (err < 0)
+                if (err < 0) {
                     logf("Recovery failed: %s", snd_strerror(err));
+                    return;
+                }
                 continue;
             }
             case SND_PCM_STATE_SETUP:
             {
                 int err = snd_pcm_prepare(handle);
-                if (err < 0)
+                if (err < 0) {
                     logf("Prepare error: %s", snd_strerror(err));
+                    return;
+                }
             }
                 /* fall through */
             case SND_PCM_STATE_PREPARED:
             {
                 int err;
-#if 0
-                /* fill buffer with silence to initiate playback without noisy click */
-                snd_pcm_sframes_t sample_size = buffer_size;
-                sample_t *samples = calloc(1, sample_size * channels * sizeof(sample_t));
-
-                snd_pcm_format_set_silence(format, samples, sample_size);
-                err = snd_pcm_writei(handle, samples, sample_size);
-                free(samples);
-
-                if (err != (ssize_t)sample_size)
-                {
-                    logf("Initial write error: written %i expected %li", err, sample_size);
+                err = playback_fill(handle, true);
+                if (err < 0 || !dma_playing)
                     return;
-                }
-#else
-                /* Fill buffer with proper sample data */
-                while (snd_pcm_avail_update(handle) >= period_size)
-                {
-                    if (copy_frames(true))
-                    {
-                        err = snd_pcm_writei(handle, frames, period_size);
-                        if (err < 0 && err != period_size && err != -EAGAIN)
-                        {
-                            logf("Write error: written %i expected %li", err, period_size);
-                            break;
-                        }
-                    }
-                }
-#endif
+
                 err = snd_pcm_start(handle);
                 if (err < 0) {
                     logf("start error: %s", snd_strerror(err));
-                    /* We will recover on the next iteration */
+                    return; /* the writer/callback handles recovery */
                 }
 
                 break;
             }
             case SND_PCM_STATE_DRAINING:
-                /* run until drained */
-                continue;
+                return; /* do not busy-wait under the PCM lock */
             default:
                 logf("Unhandled state: %s", snd_pcm_state_name(state));
                 return;
@@ -1022,8 +1008,7 @@ void pcm_rec_dma_start(void *start, size_t size)
                 return;
             }
             case SND_PCM_STATE_DRAINING:
-                /* run until drained */
-                continue;
+                return; /* do not busy-wait under the PCM lock */
             default:
                 logf("Unhandled state: %s", snd_pcm_state_name(state));
                 return;

@@ -160,3 +160,18 @@ set up the gadget: under Rockbox it stays 0. /sys/class/backlight is empty, as
 expected. The card is exFAT, mounted fmask=0000, so binaries on it run.
 
 Clockwise lowers the wheel's ABS_X (confirmed with Rockbox on the device).
+
+Host regression checks
+----------------------
+Run from the repository root:
+
+    python3 tools/shanlingq2/test_runtime.py
+    python3 tools/shanlingq2/test_gain.py
+    python3 tools/shanlingq2/test_filter.py
+    cc tools/shanlingq2/test_wheel.c -o /tmp/q2-wheel && /tmp/q2-wheel
+
+These exercise actual C functions with mocked hardware/ALSA boundaries. The
+writer polls every 5 ms during playback and every 100 ms while stopped; the
+latter trades up to 100 ms of writer response for fewer idle wakeups. Playback
+startup still primes the PCM synchronously. Battery runtime and reconnect
+behaviour need checks on the Q2 itself.

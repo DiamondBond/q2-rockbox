@@ -65,13 +65,14 @@ bool sysfs_get_int(const char *path, int *value)
     }
 
     bool success = true;
-    if(fscanf(f, "%d", value) == EOF)
+    if(fscanf(f, "%d", value) != 1)
     {
         DEBUGF("ERROR %s: Read failed for %s.", __func__, path);
         success = false;
     }
 
-    fclose(f);
+    if(fclose(f) != 0)
+        success = false;
     return success;
 }
 
@@ -91,7 +92,8 @@ bool sysfs_set_int(const char *path, int value)
         success = false;
     }
 
-    fclose(f);
+    if(fclose(f) != 0)
+        success = false;
     return success;
 }
 
@@ -118,7 +120,8 @@ bool sysfs_get_char(const char *path, char *value)
         *value = c;
     }
 
-    fclose(f);
+    if(fclose(f) != 0)
+        success = false;
     return success;
 }
 
@@ -138,7 +141,8 @@ bool sysfs_set_char(const char *path, char value)
         success = false;
     }
 
-    fclose(f);
+    if(fclose(f) != 0)
+        success = false;
     return success;
 }
 
@@ -159,7 +163,7 @@ bool sysfs_get_string(const char *path, char *value, int size)
      *
      * Empty string is not an error for us.
      */
-    if(fgets(value, size, f) == NULL && value[0] != '\0')
+    if(fgets(value, size, f) == NULL && ferror(f))
     {
         DEBUGF("ERROR %s: Read failed for %s.", __func__, path);
         success = false;
@@ -173,7 +177,8 @@ bool sysfs_get_string(const char *path, char *value, int size)
         }
     }
 
-    fclose(f);
+    if(fclose(f) != 0)
+        success = false;
     return success;
 }
 
@@ -195,6 +200,7 @@ bool sysfs_set_string(const char *path, const char *value)
         success = false;
     }
 
-    fclose(f);
+    if(fclose(f) != 0)
+        success = false;
     return success;
 }

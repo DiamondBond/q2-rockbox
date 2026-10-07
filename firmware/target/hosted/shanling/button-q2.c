@@ -96,6 +96,13 @@ int button_read_device(void)
 
     while (poll(fds, NDEV, 0) > 0) {
         for (int d = 0; d < NDEV; d++) {
+            if (fds[d].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                close(fds[d].fd);
+                fds[d].fd = -1;
+                if (d == KEYS) buttons = 0;
+                else anchor = -1;
+                continue;
+            }
             if (!(fds[d].revents & POLLIN) || read(fds[d].fd, &e, sizeof e) != sizeof e)
                 continue;
             if (d == KEYS && e.type == EV_KEY) {
