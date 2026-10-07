@@ -483,6 +483,12 @@ static const char graphic_numeric[] = "graphic,numeric";
 # endif
 #endif
 
+#ifdef AUDIOHW_HAVE_FILTER_ROLL_OFF
+# ifndef TARGET_DEFAULT_FILTER_ROLL_OFF
+#   define TARGET_DEFAULT_FILTER_ROLL_OFF 0
+# endif
+#endif
+
 /*
  * Total buffer size due to this setting = max files in dir * 52 bytes
  * Keep this in mind when selecting the maximum - if the maximum is too
@@ -1213,7 +1219,8 @@ const struct settings_list settings[] = {
 #endif
 
 #ifdef AUDIOHW_HAVE_FILTER_ROLL_OFF
-    CHOICE_SETTING(F_SOUNDSETTING, roll_off, LANG_FILTER_ROLL_OFF, 0,
+    CHOICE_SETTING(F_SOUNDSETTING, roll_off, LANG_FILTER_ROLL_OFF,
+                   TARGET_DEFAULT_FILTER_ROLL_OFF,
 #if defined(AUDIOHW_HAVE_ES9218_ROLL_OFF)
                    "roll_off", "linear fast,linear slow,minimum fast,minimum slow,apodizing 1,apodizing 2,hybrid fast,brick wall", sound_set_filter_roll_off,
                    8, ID2P(LANG_FILTER_LINEAR_FAST), ID2P(LANG_FILTER_LINEAR_SLOW), ID2P(LANG_FILTER_MINIMUM_FAST), ID2P(LANG_FILTER_MINIMUM_SLOW),

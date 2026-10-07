@@ -109,6 +109,8 @@
 #define HAVE_ALSA_32BIT
 /* low gain unless asked: safer for sensitive earphones */
 #define TARGET_DEFAULT_DAC_POWER_MODE SOUND_LOW_POWER
+/* stock's "Low Delay Slow" filter, Rockbox's "Short Slow" */
+#define TARGET_DEFAULT_FILTER_ROLL_OFF 3
 
 /* We don't have hardware controls */
 #define HAVE_SW_TONE_CONTROLS

@@ -120,7 +120,8 @@ an int pointer:
   0xc0044d19  filter, 0 fast / 1 slow / 2 low-delay fast / 3 low-delay slow
               (mclSetFilter at 0x5adf2c; codec_cs43131_ioctl rejects >= 4).
               Sound Settings > DAC filter roll-off exposes these as Sharp,
-              Slow, Short Sharp, Short Slow. Saved by Rockbox and reapplied
+              Slow, Short Sharp, Short Slow; the default is Short Slow
+              (stock's low-delay slow). Saved by Rockbox and reapplied
               when opening the DAC, including fallback from Bluetooth.
   0xc0044d1b  PCM mode, 0 (hciplayer, per PCM track)
   0xc0044d1f  mute, 1 mute / 0 unmute (hciplayer: set on pause and close)
