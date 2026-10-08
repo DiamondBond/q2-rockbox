@@ -13,6 +13,7 @@ with tempfile.TemporaryDirectory() as tmp:
 #define SOUND_HIGH_POWER 0
 void audiohw_mute(int);
 """)
+    (tmp / "button.h").write_text("bool headphones_inserted(void);\n")
     (tmp / "pcm-alsa.h").write_text("""
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
@@ -26,7 +27,7 @@ void pcm_set_mixer_volume(int, int);
 #define ioctl mock_ioctl
 #include "firmware/target/hosted/shanling/shanlingq2_codec.c"
 
-static int bluetooth, last_filter = -1, writes;
+static int bluetooth, phones, last_filter = -1, writes;
 int mock_open(const char *path, int flags, ...)
 {
     (void)flags;
@@ -51,6 +52,7 @@ int snd_pcm_open(snd_pcm_t **pcm, const char *name,
     return bluetooth ? 0 : -1;
 }
 int snd_pcm_close(snd_pcm_t *pcm) { (void)pcm; return 0; }
+bool headphones_inserted(void) { return phones; }
 void pcm_alsa_set_playback_device(const char *name) { (void)name; }
 void pcm_set_mixer_volume(int left, int right) { (void)left; (void)right; }
 
@@ -76,6 +78,11 @@ int main(void)
     audiohw_close();
     audiohw_preinit();
     assert(last_filter == 2 && writes == 7);
+    audiohw_close();
+    /* headphones in a jack: the DAC, though Bluetooth would open */
+    bluetooth = phones = 1;
+    audiohw_preinit();
+    assert(writes == 8);
     audiohw_close();
 }
 ''')
