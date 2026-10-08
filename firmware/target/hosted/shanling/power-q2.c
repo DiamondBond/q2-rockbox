@@ -86,10 +86,10 @@ static int gpio(void)
     return fd;
 }
 
-/* the 3.5 mm (PA07) and 4.4 mm (PA08) jacks, 1 = plugged, as stock's
- * check_headset_status reads them */
+/* the 3.5 mm (PA07) and 4.4 mm (PA08) jacks, active low: stock's
+ * check_headset_status takes gpio_get_value() == 0 as plugged */
 bool headphones_inserted(void)
 {
-    return gpio() >= 0 && (ioctl(gpio(), GPIO_GET_VALUE, "PA07") > 0 ||
-                           ioctl(gpio(), GPIO_GET_VALUE, "PA08") > 0);
+    return gpio() >= 0 && (ioctl(gpio(), GPIO_GET_VALUE, "PA07") == 0 ||
+                           ioctl(gpio(), GPIO_GET_VALUE, "PA08") == 0);
 }
