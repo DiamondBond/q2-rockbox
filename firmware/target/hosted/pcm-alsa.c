@@ -315,7 +315,7 @@ static void scale_frames(sample_t *dst, const int16_t *src, size_t count)
 #endif
 
 /* copy pcm samples to a spare buffer, suitable for snd_pcm_writei() */
-static bool copy_frames(bool first)
+static bool copy_frames(void)
 {
     ssize_t nframes, frames_left = period_size;
     bool new_buffer = false;
@@ -387,7 +387,9 @@ static bool copy_frames(bool first)
         pcm_size -= nframes*4;
         frames_left -= nframes;
 
-        if (new_buffer && !first)
+        /* even while priming: the mixer only prepares its next frame on
+         * STARTED, so skipping it replays the same frame (a buzz) */
+        if (new_buffer)
         {
             new_buffer = false;
 #ifdef HAVE_RECORDING
@@ -413,7 +415,7 @@ static bool copy_frames(bool first)
 
 /* Keep an unwritten tail across short writes and EAGAIN: copy_frames has
  * already consumed those samples from Rockbox's buffer. */
-static int playback_fill(snd_pcm_t *handle, bool first)
+static int playback_fill(snd_pcm_t *handle)
 {
     snd_pcm_sframes_t avail;
     int recovered_once = 0;
@@ -422,7 +424,7 @@ static int playback_fill(snd_pcm_t *handle, bool first)
     {
         if (!pending_frames)
         {
-            if (!copy_frames(first))
+            if (!copy_frames())
                 break;
             pending_frames = period_size;
             frame_offset = 0;
@@ -493,7 +495,7 @@ static void async_callback(snd_async_handler_t *ahandler)
     if (current_alsa_mode == SND_PCM_STREAM_PLAYBACK)
     {
 #endif
-        if (playback_fill(handle, false) < 0)
+        if (playback_fill(handle) < 0)
             goto abort;
 #ifdef HAVE_RECORDING
     }
@@ -520,7 +522,7 @@ static void async_callback(snd_async_handler_t *ahandler)
             }
 
             /* start the fake DMA transfer */
-            if (!copy_frames(false))
+            if (!copy_frames())
             {
                 /* do not spam logf */
                 /* logf("%s: No Data.", __func__); */
@@ -604,7 +606,7 @@ static void *writer_main(void *arg)
 
             if (err >= 0 && state != SND_PCM_STATE_DRAINING &&
                 state != SND_PCM_STATE_SETUP)
-                err = playback_fill(handle, false);
+                err = playback_fill(handle);
 
             /* playback_fill may have stopped playback (no more data) */
             if (err >= 0 && dma_playing &&
@@ -888,7 +890,7 @@ static void sink_dma_start(const void *addr, size_t size)
             case SND_PCM_STATE_PREPARED:
             {
                 int err;
-                err = playback_fill(handle, true);
+                err = playback_fill(handle);
                 if (err < 0 || !dma_playing)
                     return;
 

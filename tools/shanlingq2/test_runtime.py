@@ -43,8 +43,7 @@ static pthread_mutex_t pcm_mtx = PTHREAD_MUTEX_INITIALIZER;
 static int copied, calls, script[8], count, at, output[32], written;
 static int state, start_error, reopened;
 static unsigned slept;
-static bool copy_frames(bool first) {
-    (void)first;
+static bool copy_frames(void) {
     for (int i = 0; i < 8; i++) frames[i] = copied * 8 + i;
     copied++;
     return true;
@@ -82,16 +81,16 @@ int main(void) {
     frames = calloc(8, sizeof(*frames));
     /* One period, three writes separated by EAGAIN: no samples lost/copied twice. */
     script[0] = 1; script[1] = -EAGAIN; script[2] = 1; script[3] = 2; count = 4;
-    assert(!playback_fill(handle, true));
+    assert(!playback_fill(handle));
     assert(copied == 1 && pending_frames == 3 && written == 2);
-    assert(!playback_fill(handle, false));
+    assert(!playback_fill(handle));
     assert(copied == 1 && pending_frames == 0 && written == 8);
     for (int i = 0; i < 8; i++) assert(output[i] == i);
-    /* Recovered underrun returns rather than retrying endlessly; preserves the tail. */
+    /* A recovered underrun retries once, not endlessly, and keeps the tail. */
     at = 0; count = 1; script[0] = -EPIPE;
-    assert(!playback_fill(handle, false) && pending_frames == 4 && xruns == 1);
+    assert(!playback_fill(handle) && pending_frames == 4 && xruns == 1);
     at = 0; script[0] = -ENODEV;
-    assert(playback_fill(handle, false) == -ENODEV);
+    assert(playback_fill(handle) == -ENODEV);
     assert(copied == 2);
     writer_run = true; dma_playing = false;
     writer_main(NULL); assert(slept == 100000 && !reopened);
@@ -110,6 +109,49 @@ with tempfile.TemporaryDirectory() as tmp:
     src.write_text(source)
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-fsanitize=undefined',
                     str(src), '-pthread', '-o', str(exe)], check=True)
+    subprocess.run([str(exe)], check=True)
+    # Priming several periods must not replay a mixer frame: the mixer
+    # prepares its next frame only on PCM_DMAST_STARTED.
+    src.write_text(r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+#include <sys/types.h>
+typedef int16_t sample_t;
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define panicf(...) assert(0)
+enum { PCM_DMAST_OK, PCM_DMAST_STARTED };
+static const long period_size = 2;
+static sample_t frames[4];
+static const void *pcm_data;
+static size_t pcm_size;
+static int16_t mix[2][4], next = 1;
+static bool pcm_play_dma_complete_callback(int status, const void **addr, size_t *size) {
+    (void)status; *addr = mix[next]; *size = sizeof mix[0]; return true;
+}
+static int pcm_play_dma_status_callback(int status) {
+    static int16_t frame = 2;
+    assert(status == PCM_DMAST_STARTED);
+    next ^= 1;
+    for (int i = 0; i < 4; i++) mix[next][i] = frame;
+    frame++;
+    return PCM_DMAST_OK;
+}
+''' + function('copy_frames') + r'''
+int main(void) {
+    for (int i = 0; i < 4; i++) mix[0][i] = 0, mix[1][i] = 1;
+    pcm_data = mix[0]; pcm_size = sizeof mix[0];
+    for (int f = 0; f < 4; f++) {
+        assert(copy_frames());
+        assert(frames[0] == f && frames[3] == f);
+    }
+    return 0;
+}
+''')
+    subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function',
+                    str(src), '-o', str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
     (tmp / 'config.h').write_text('')
     (tmp / 'debug.h').write_text('#define DEBUGF(...) ((void)0)\n')
@@ -191,4 +233,4 @@ int main(void) {
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-I', str(tmp), '-I',
                     str(root), str(src), '-o', str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
-print('PCM tails/recovery/idle/cleanup, sysfs failures and evdev disconnects: OK')
+print('PCM tails/recovery/idle/cleanup/priming, sysfs failures and evdev disconnects: OK')
