@@ -31,13 +31,16 @@
  * stays off. "bluealsa" is the most recently connected device through plug,
  * which converts Rockbox's rate and 32-bit samples to the link's. pcm-alsa
  * feeds it from a thread (it has no async callback), and falls back here,
- * to the DAC, when the headset goes away. */
+ * to the DAC, when the headset goes away. Headphones in either jack win over
+ * Bluetooth: bluez-alsa can still hold a PCM for a headset that isn't in
+ * anyone's ears (earbuds linked from their case), and that played to nobody. */
 #include <alsa/asoundlib.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include "config.h"
 #include "audiohw.h"
+#include "button.h"
 #include "pcm-alsa.h"
 
 #define DAC_VOLUME   0xc0044d00 /* left << 8 | right, each 0..100 (0 dB) */
@@ -77,7 +80,7 @@ static bool bt_connected(void)
  * lost, to choose the device again */
 void audiohw_preinit(void)
 {
-    if (bt_connected()) {
+    if (!headphones_inserted() && bt_connected()) {
         pcm_alsa_set_playback_device(BT_DEVICE);
         audiohw_mute(false);
         return;

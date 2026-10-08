@@ -54,6 +54,7 @@
 #include "pcm_sampr.h"
 #include "pcm_sink.h"
 #include "audiohw.h"
+#include "button.h"
 #include "pcm-alsa.h"
 #include "fixedpoint.h"
 
@@ -585,6 +586,10 @@ static int writer_reopen(void)
 static void *writer_main(void *arg)
 {
     (void)arg;
+#ifdef HAVE_HEADPHONE_DETECTION
+    bool phones = headphones_inserted();
+    int polls = 0;
+#endif
 
     while (__atomic_load_n(&writer_run, __ATOMIC_ACQUIRE))
     {
@@ -617,6 +622,21 @@ static void *writer_main(void *arg)
         }
         else
             lost = dma_playing && !handle;
+
+#ifdef HAVE_HEADPHONE_DETECTION
+        /* Headphones plugged in while on another device (Bluetooth): the
+         * target picks again, as when the device is lost. Checked about every
+         * 100 ms while playing. */
+        if (++polls >= 20)
+        {
+            bool now = headphones_inserted();
+            polls = 0;
+            if (now && !phones && handle &&
+                strcmp(current_alsa_device, DEFAULT_PLAYBACK_DEVICE))
+                lost = true;
+            phones = now;
+        }
+#endif
 
         if (lost)
             lost = writer_reopen() < 0;

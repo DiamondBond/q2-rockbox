@@ -67,7 +67,15 @@ static int snd_pcm_recover(snd_pcm_t *p, int err, int silent) {
 static int snd_pcm_state(snd_pcm_t *p) { (void)p; return state; }
 static int snd_pcm_start(snd_pcm_t *p) { (void)p; return start_error; }
 static int writer_reopen(void) { reopened++; return -ENODEV; }
-static int mock_usleep(unsigned usec) { slept = usec; writer_run = false; return 0; }
+#define HAVE_HEADPHONE_DETECTION
+#define DEFAULT_PLAYBACK_DEVICE "plughw:0,0"
+static const char *current_alsa_device = "bluealsa";
+static bool phones_in;
+static int loops = 1, plug_at;
+/* plugged in from the start, or once loops counts down to plug_at */
+static bool headphones_inserted(void) { return phones_in || loops <= plug_at; }
+#include <string.h>
+static int mock_usleep(unsigned usec) { slept = usec; if (--loops <= 0) writer_run = false; return 0; }
 #define usleep mock_usleep
 static void close_hwdev(void) {
     /* The production cleanup must stop readers while their buffer is alive. */
@@ -97,6 +105,18 @@ int main(void) {
     writer_run = true; dma_playing = true; state = SND_PCM_STATE_PREPARED;
     count = at = 0; start_error = -ENODEV;
     writer_main(NULL); assert(slept == 1000000 && reopened == 1);
+    /* Headphones plugged in on Bluetooth: one reopen; none if already in,
+     * none on the DAC. */
+    start_error = 0; dma_playing = false; reopened = 0;
+    writer_run = true; loops = 60;
+    writer_main(NULL); assert(!reopened);
+    phones_in = true; writer_run = true; loops = 60;
+    writer_main(NULL); assert(!reopened);
+    phones_in = false; plug_at = 30; writer_run = true; loops = 60;
+    writer_main(NULL); assert(reopened == 1);
+    current_alsa_device = DEFAULT_PLAYBACK_DEVICE;
+    writer_run = true; loops = 60;
+    writer_main(NULL); assert(reopened == 1);
     frames[0] = 0;
     alsadev_cleanup(); assert(!frames && !handle);
     return 0;
