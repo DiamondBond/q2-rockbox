@@ -416,6 +416,7 @@ static bool copy_frames(bool first)
 static int playback_fill(snd_pcm_t *handle, bool first)
 {
     snd_pcm_sframes_t avail;
+    int recovered_once = 0;
 
     while ((avail = snd_pcm_avail_update(handle)) >= period_size)
     {
@@ -442,8 +443,9 @@ static int playback_fill(snd_pcm_t *handle, bool first)
             int recovered = snd_pcm_recover(handle, err, 1);
             if (recovered < 0)
                 return recovered;
-            /* Retry on the next callback, so a broken device cannot spin. */
-            break;
+            /* a recovered PCM raises no SIGIO: refill now, once, so a broken device cannot spin */
+            if (recovered_once++)
+                break;
         }
     }
 
