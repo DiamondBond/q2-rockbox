@@ -36,16 +36,18 @@ Installing a release
    (https://github.com/DiamondBond/q2-rockbox/releases) to the card's root,
    giving /.rockbox. The card must be exFAT or FAT (stock mounts it so that
    binaries on it run).
-3. Restart: Rockbox starts whenever the card holds /.rockbox/rockbox, from
-   Q2 Pod V8.5 on (V8.3 and V8.4 remember a boot choice instead: on those,
-   hold Play/Pause at power-on once to choose Rockbox).
+3. Restart: on Q2 Pod V9.4 and later, System settings > Boot to selects
+   Rockbox or Q2-Pod persistently. Rockbox is the default when no preference
+   has been saved and the card holds /.rockbox/rockbox. Older V8.5–V9.3 always
+   start Rockbox when that file is present.
 
 To get back to Q2 Pod: Settings > System > Boot stock OS, or hold Return or
-Play/Pause at power-on. Q2 Pod runs for that session; the next power-on is
-Rockbox again while the card has it, as on an iPod with Rockbox. Starting
-without the card also gives Q2 Pod. Shutting down (hold Play) exits to Q2 Pod
-the same way. For USB storage or a device poweroff, go to Q2 Pod first. Stock
-firmware V1.32 flashes back over the loader (V1.3R) to remove it.
+Play/Pause at power-on. Q2 Pod runs for that session; the next power-on
+follows the saved Boot to choice (Rockbox by default). Starting without the
+card also gives Q2 Pod. Shutting down (hold Play) exits to Q2 Pod for that
+session and does not change that saved choice. For USB storage or a device
+poweroff, go to Q2 Pod first. Stock firmware V1.32 flashes back over the loader
+(V1.3R) to remove it.
 
 Launcher contract (kept for the q2-pod boot hook)
 -------------------------------------------------
@@ -166,6 +168,7 @@ Host regression checks
 ----------------------
 Run from the repository root:
 
+    python3 tools/shanlingq2/test_display_power.py
     python3 tools/shanlingq2/test_runtime.py
     python3 tools/shanlingq2/test_gain.py
     python3 tools/shanlingq2/test_filter.py
@@ -176,3 +179,12 @@ writer polls every 5 ms during playback and every 100 ms while stopped; the
 latter trades up to 100 ms of writer response for fewer idle wakeups. Playback
 startup still primes the PCM synchronously. Battery runtime and reconnect
 behaviour need checks on the Q2 itself.
+
+2.1 device integration refinements
+----------------------------------
+LCD: only the hidden page's previous changed rectangle is refreshed before
+reuse; a failed pan retries a full frame. Battery: the last valid 0-100
+reading is kept, -1 until the first one. Charger status is read at most once
+a second; Full counts as plugged in, not charging. test_display_power.py
+covers these on the host; device checks: unplug at full charge, gauge error
+recovery.

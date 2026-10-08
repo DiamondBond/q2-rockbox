@@ -23,7 +23,7 @@
  * landscape (x, y) at panel (319 - y, x), as the stock boot logo is stored.
  * fb0 has two pages: an update is drawn on the hidden one, which is then
  * panned to (as stock demo does, so nothing is drawn while it is shown), and
- * copied to the other, to keep both pages the same. */
+ * its changed rectangle refreshed when that page is used again. */
 #include <fcntl.h>
 #include <linux/fb.h>
 #include <stdint.h>
@@ -40,7 +40,8 @@ static uint32_t *panel;
 static unsigned stride; /* panel pixels per row */
 static struct fb_var_screeninfo var;
 static int pages = 1, page; /* page: the one on screen */
-static bool synced; /* both pages hold the whole frame */
+static bool synced; /* at least one page holds the whole frame */
+static int stale_x, stale_y, stale_w = LCD_WIDTH, stale_h = LCD_HEIGHT;
 
 void lcd_init_device(void)
 {
@@ -100,13 +101,29 @@ void lcd_update_rect(int x, int y, int width, int height)
         draw(0, x, y, width, height);
         return;
     }
+    /* Refresh the hidden page's previous damage only if this update won't cover it. */
+    if (x > stale_x || y > stale_y || x + width < stale_x + stale_w ||
+        y + height < stale_y + stale_h)
+    {
+        /* Copy the displayed pixels, not possibly unflushed Rockbox drawing. */
+        for (int col = stale_x; col < stale_x + stale_w; col++) {
+            unsigned offset = col * stride + LCD_HEIGHT - stale_y - stale_h;
+            memcpy(panel + !page * LCD_WIDTH * stride + offset,
+                   panel + page * LCD_WIDTH * stride + offset,
+                   stale_h * sizeof(*panel));
+        }
+    }
     draw(!page, x, y, width, height);
+    var.yoffset = !page * var.yres;
+    if (ioctl(fd, FBIOPAN_DISPLAY, &var) < 0) {
+        var.yoffset = page * var.yres;
+        synced = false; /* retry a whole frame, including the failed update */
+        return;
+    }
     page = !page;
-    var.yoffset = page * var.yres;
-    ioctl(fd, FBIOPAN_DISPLAY, &var);
+    stale_x = x, stale_y = y, stale_w = width, stale_h = height;
     unsigned int crtc = 0; /* as stock: wait until the old page is off screen */
     ioctl(fd, FBIO_WAITFORVSYNC, &crtc);
-    draw(!page, x, y, width, height);
 }
 
 void lcd_update(void)

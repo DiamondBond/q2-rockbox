@@ -30,29 +30,47 @@
 #include "power.h"
 #include "sysfs.h"
 
-bool charging_state(void)
+static bool charging, plugged;
+
+static void read_charger(void)
 {
     static long last_tick;
-    static bool charging;
-    if (current_tick - last_tick > HZ / 2) {
-        char buf[12] = "";
-        sysfs_get_string("/sys/class/power_supply/battery/status", buf, sizeof buf);
+    static bool sampled;
+    if (!sampled || (unsigned long)current_tick - (unsigned long)last_tick >= HZ) {
+        char buf[16];
+        sampled = true;
         last_tick = current_tick;
-        charging = !strncmp(buf, "Charging", 8);
+        if (!sysfs_get_string("/sys/class/power_supply/battery/status", buf, sizeof buf))
+            return;
+        if (!strcmp(buf, "Charging") || !strcmp(buf, "Full")) {
+            charging = !strcmp(buf, "Charging");
+            plugged = true;
+        } else if (!strcmp(buf, "Discharging") || !strcmp(buf, "Not charging")) {
+            charging = plugged = false;
+        }
     }
+}
+
+bool charging_state(void)
+{
+    read_charger();
     return charging;
 }
 
 int _battery_level(void)
 {
-    int level = 0;
-    sysfs_get_int("/sys/devices/i2c-0/0-0062/cw2015_capacity", &level);
-    return level;
+    static int last_level = -1;
+    int level;
+    if (sysfs_get_int("/sys/devices/i2c-0/0-0062/cw2015_capacity", &level) &&
+        level >= 0 && level <= 100)
+        last_level = level;
+    return last_level;
 }
 
 unsigned int power_input_status(void)
 {
-    return charging_state() ? POWER_INPUT_USB_CHARGER : POWER_INPUT_NONE;
+    read_charger();
+    return plugged ? POWER_INPUT_USB_CHARGER : POWER_INPUT_NONE;
 }
 
 bool q2_boot_stock;
