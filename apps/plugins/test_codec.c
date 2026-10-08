@@ -726,6 +726,11 @@ static enum plugin_status test_track(const char* filename)
 
     if (use_dsp) {
         rb->dsp_configure(ci.dsp, DSP_RESET, 0);
+        /* The DSP is told its output samplerate when a track is played.
+         * Tell it here as well, or it is that of the last track and not
+         * what playback would use now. */
+        rb->dsp_configure(ci.dsp, DSP_SET_OUT_FREQUENCY,
+                          rb->mixer_get_frequency());
         rb->dsp_configure(ci.dsp, DSP_FLUSH, 0);
     }
 
@@ -918,6 +923,8 @@ enum plugin_status plugin_start(const void* parameter)
         WRITE_WAV_WITH_DSP,
         CHECKSUM,
         CHECKSUM_DIR,
+        CHECKSUM_WITH_DSP,
+        CHECKSUM_DIR_WITH_DSP,
         QUIT,
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
         BOOST,
@@ -934,6 +941,8 @@ enum plugin_status plugin_start(const void* parameter)
         "Write WAV with DSP",
         "Checksum",
         "Checksum folder",
+        "Checksum with DSP",
+        "Checksum folder with DSP",
         "Quit",
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
         "Boosting",
@@ -967,6 +976,13 @@ menu:
 
     scandir = 0;
 
+    /* Map checksum runs with DSP to CHECKSUM and CHECKSUM_DIR: the
+     * checksum is then that of the DSP's output. */
+    bool dsp_checksum = (result == CHECKSUM_WITH_DSP ||
+                         result == CHECKSUM_DIR_WITH_DSP);
+    if (dsp_checksum)
+        result -= 2;
+
     /* Map test runs with checksum calcualtion to standard runs 
      * SPEED_TEST and SPEED_TEST_DIR and set the 'checksum' flag. */
     if ((checksum = (result == CHECKSUM || 
@@ -978,6 +994,8 @@ menu:
     if ((use_dsp = (result >= SPEED_TEST_WITH_DSP &&
                     result <= WRITE_WAV_WITH_DSP)))
         result -= 3;
+    else
+        use_dsp = dsp_checksum;
 
     if (result == SPEED_TEST) {
         wavinfo.fd = -1;
