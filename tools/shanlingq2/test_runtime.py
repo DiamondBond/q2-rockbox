@@ -83,7 +83,16 @@ static void close_hwdev(void) {
     handle = NULL;
 }
 '''
-source += '\n'.join(function(n) for n in ('playback_fill', 'writer_main', 'alsadev_cleanup'))
+source += r'''
+static const unsigned hw_freq_sampr[] = { 44100, 48000 };
+static unsigned last_sample_rate = 44100;
+static void *ahandler;
+static int params_set;
+static int snd_pcm_drop(snd_pcm_t *p) { (void)p; return 0; }
+static int set_hwparams(snd_pcm_t *p, unsigned long r) { (void)p; (void)r; params_set++; return 0; }
+static int set_swparams(snd_pcm_t *p) { (void)p; return 0; }
+'''
+source += '\n'.join(function(n) for n in ('playback_fill', 'writer_main', 'alsadev_cleanup', 'sink_set_freq_nolock'))
 source += r'''
 int main(void) {
     frames = calloc(8, sizeof(*frames));
@@ -118,6 +127,12 @@ int main(void) {
     writer_run = true; loops = 60;
     writer_main(NULL); assert(reopened == 1);
     frames[0] = 0;
+    /* A rate change reopens a writer-fed PCM (Bluetooth) and reconfigures
+     * one with a SIGIO handler (the DAC) in place. */
+    reopened = 0; handle = &device;
+    sink_set_freq_nolock(1); assert(reopened == 1 && !params_set);
+    ahandler = &device;
+    sink_set_freq_nolock(0); assert(reopened == 1 && params_set == 1);
     alsadev_cleanup(); assert(!frames && !handle);
     return 0;
 }

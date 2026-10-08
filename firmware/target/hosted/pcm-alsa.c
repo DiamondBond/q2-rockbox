@@ -822,6 +822,14 @@ static void sink_set_freq_nolock(uint16_t freq)
     {
         last_sample_rate = sampr;
 
+        /* A writer-fed PCM (bluez-alsa's ioplug) takes new hw_params in place
+         * but then never plays again: open it afresh at the new rate */
+        if (!ahandler)
+        {
+            writer_reopen();
+            return;
+        }
+
 #ifdef AUDIOHW_MUTE_ON_SRATE_CHANGE
         audiohw_mute(true);
 #endif
