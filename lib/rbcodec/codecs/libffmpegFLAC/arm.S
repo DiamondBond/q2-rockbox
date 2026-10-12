@@ -25,9 +25,63 @@
 /* The following is an assembler optimised version of the LPC filtering
    routines needed for FLAC decoding. It is optimised for use with ARM 
    processors.
-   All LPC filtering up to order 9 is done in specially optimised unrolled
-   loops, while every order above this is handled by a slower default routine.
+   Orders up to 8 are done in unrolled loops with every coefficient held in a
+   register.  Above that there are too few registers to hold them, so orders 9
+   and up compute two outputs per pass instead, which lets each coefficient
+   and each history sample loaded serve two multiplies: unrolled for orders 9
+   to 12, which -8 uses, and a loop for the rest.  The generic routine only
+   takes a final odd sample.
  */
+/* Two LPC outputs per pass for a fixed order, unrolled: the .pair loop
+   below with the order known, so no tap loop and no parity test, and c[0]
+   kept in r12 for the last term of y1.  On entry r2 is the order, r3 the
+   history and r4 the coefficients. */
+.macro PAIR_STEP                      @ two taps of y0 and two of y1
+    mla r10, r6, r9, r10              @ y0 += c[m] * s[m]
+    ldmia r5!, { r8, r9 }             @ c[m+1], c[m+2]
+    mla r11, r6, r8, r11              @ y1 += c[m+1] * s[m]
+    ldmdb r3!, { r6, r7 }             @ s[m+2], s[m+1]
+    mla r10, r7, r8, r10              @ y0 += c[m+1] * s[m+1]
+    mla r11, r7, r9, r11              @ y1 += c[m+2] * s[m+1]
+.endm
+
+.macro PAIR_ORDER order
+    add r14, r3, #\order * 4          @ first output, holding its residual
+    ldr r12, [r4]                     @ c[0]
+    subs r0, r0, #2
+    blt .pairunrolledlast
+1:
+    mov r3, r14
+    add r5, r4, #4
+    ldr r6, [r3, #-4]!                @ newest history sample
+    mul r10, r6, r12                  @ the first step, with c[0] from r12
+    ldmia r5!, { r8, r9 }
+    mul r11, r6, r8
+    ldmdb r3!, { r6, r7 }
+    mla r10, r7, r8, r10
+    mla r11, r7, r9, r11
+    .rept (\order - 1) / 2 - 1
+    PAIR_STEP
+    .endr
+.if \order & 1
+    mla r10, r6, r9, r10              @ odd: y0's last tap
+.else
+    mla r10, r6, r9, r10              @ even: two taps of y0, one of y1 left
+    ldr r8, [r5]                      @ c[order-1]
+    mla r11, r6, r8, r11
+    ldr r7, [r3, #-4]                 @ the oldest sample
+    mla r10, r7, r8, r10
+.endif
+    ldmia r14, { r6, r7 }             @ the two residuals
+    add r6, r6, r10, asr r1           @ y0
+    mla r11, r6, r12, r11             @ y1's last term needs y0
+    add r7, r7, r11, asr r1           @ y1
+    stmia r14!, { r6, r7 }
+    subs r0, r0, #2
+    bge 1b
+    b .pairunrolledlast
+.endm
+
 #ifdef USE_IRAM
     .section .icode,"ax",%progbits
 #else
@@ -48,10 +102,10 @@ lpc_decode_arm:
     sub r3, r3, r2, lsl #2    @ r3 = history
     cmp r0, #0                @ no samples to process
     beq .exit
-    cmp r2, #9                @ check if order is too high for unrolled loops
+    cmp r2, #12               @ check if order is too high for unrolled loops
     addls pc, pc, r2, lsl #2  @ jump to our unrolled decode loop if it exists
 @ jumptable:
-    b .default                @ order too high, go to default routine
+    b .pair                   @ order too high, go to the two-output loop
     b .exit                   @ zero order filter isn't possible, exit function
     b .order1
     b .order2
@@ -61,36 +115,83 @@ lpc_decode_arm:
     b .order6
     b .order7
     b .order8
+    b .order9
+    b .order10
+    b .order11
 
 @ last jump table entry coincides with target, so leave it out
+.order12:
+    PAIR_ORDER 12
+.order11:
+    PAIR_ORDER 11
+.order10:
+    PAIR_ORDER 10
 .order9:
-    ldmia r4, { r5-r12, r14 } @ fetch coefs
-.loop9:
-    ldr r4, [r3], #4          @ load first history sample
-    mul r2, r4, r14           @ multiply with last coef
-    ldr r4, [r3], #4          @ rinse and repeat while accumulating sum in r2
-    mla r2, r4, r12, r2
-    ldr r4, [r3], #4
-    mla r2, r4, r11, r2
-    ldr r4, [r3], #4
-    mla r2, r4, r10, r2
-    ldr r4, [r3], #4
-    mla r2, r4, r9, r2
-    ldr r4, [r3], #4
-    mla r2, r4, r8, r2
-    ldr r4, [r3], #4
-    mla r2, r4, r7, r2
-    ldr r4, [r3], #4
-    mla r2, r4, r6, r2
-    ldr r4, [r3], #4
-    mla r2, r4, r5, r2
-    ldr r4, [r3]              @ r4 = residual
-    add r2, r4, r2, asr r1    @ shift sum by qlevel bits and add residual 
-    str r2, [r3], #-8*4       @ save result and wrap history pointer back
-    subs r0, r0, #1           @ check if we're done
-    bne .loop9                @ nope, jump back
-    b .exit
-    
+    PAIR_ORDER 9
+.pairunrolledlast:                @ r2 is still the order here
+    adds r0, r0, #2               @ 0 or 1 left
+    beq .exit
+    sub r3, r14, r2, lsl #2       @ the generic routine takes the last one
+    b .default
+
+.pair:
+    /* Two outputs per pass, y0 at r14 and y1 after it.  y0 sums c[m] times
+       the sample m+1 back from it; y1 sums c[m] times the sample m back from
+       y0, so walking m upwards one history sample serves y0 with c[m] and y1
+       with c[m+1].  y1's last term is c[0] times y0 itself, added once y0 is
+       known.  Coefficients go up through r5, samples down through r3.
+         r0 outputs left   r1 qlevel        r2 end of the coefficient walk
+         r4 coeffs         r10, r11 sums    r12 order    r14 y0 */
+    mov r12, r2
+    sub r2, r12, #1
+    mov r2, r2, lsr #1        @ (order-1)/2 passes of two taps
+    add r2, r4, r2, lsl #3
+    add r2, r2, #4            @ where r5 stands when they are done
+    add r14, r3, r12, lsl #2  @ first output, holding its residual
+    subs r0, r0, #2
+    blt .pairlast
+.pairloop:
+    mov r3, r14
+    mov r5, r4
+    ldr r6, [r3, #-4]!        @ newest history sample
+    ldr r9, [r5], #4          @ c[0]
+    mov r10, #0
+    mov r11, #0
+.pairtaps:
+    mla r10, r6, r9, r10      @ y0 += c[m] * s[m]
+    ldmia r5!, { r8, r9 }     @ c[m+1], c[m+2]
+    mla r11, r6, r8, r11      @ y1 += c[m+1] * s[m]
+    ldmdb r3!, { r6, r7 }     @ s[m+2], s[m+1]
+    mla r10, r7, r8, r10      @ y0 += c[m+1] * s[m+1]
+    cmp r5, r2
+    mla r11, r7, r9, r11      @ y1 += c[m+2] * s[m+1]
+    bne .pairtaps
+    tst r12, #1
+    mlane r10, r6, r9, r10    @ odd order: y0's last tap, and done
+    beq .paireven
+.pairout:
+    ldr r8, [r4]              @ c[0]
+    ldmia r14, { r6, r7 }     @ the two residuals
+    add r6, r6, r10, asr r1   @ y0
+    mla r11, r6, r8, r11      @ y1's last term needs y0
+    add r7, r7, r11, asr r1   @ y1
+    stmia r14!, { r6, r7 }
+    subs r0, r0, #2
+    bge .pairloop
+.pairlast:
+    adds r0, r0, #2           @ 0 or 1 left
+    beq .exit
+    mov r2, r12               @ the generic routine takes the last one
+    sub r3, r14, r12, lsl #2
+    b .default
+.paireven:                    @ even order: two taps of y0 and one of y1 left
+    mla r10, r6, r9, r10
+    ldr r8, [r5]              @ c[order-1]
+    mla r11, r6, r8, r11
+    ldr r7, [r3, #-4]         @ the oldest sample
+    mla r10, r7, r8, r10
+    b .pairout
+
 .order8:
     ldmia r4, { r5-r12 }
 .loop8:
@@ -294,8 +395,9 @@ lpc_decode_arm:
    Orders 1..8 get their own loop with every coefficient held in a register:
    the C loop reloads all of them for every output sample although they are
    invariant for the whole call, and spills the loop bound to the stack on top
-   of that.  Orders above 8 go through a chunked loop; the reference encoder's
-   default maximum order is 8 and no test stream here exceeds it.
+   of that.  Orders 9..12, which -8 uses, cannot hold theirs, so they compute
+   two outputs per pass instead and every coefficient and sample loaded serves
+   two multiplies.  Orders above 12 go through a generic loop.
 
    Registers, all orders:
 
@@ -333,7 +435,11 @@ lpc_decode_arm:
 #else
 #define LPC32_HOT  .text
 #endif
-#define LPC32_COLD .text
+/* Its own section, not plain .text: plugin.lds takes *(.text*) so placement is
+   unchanged, but the link map then reports the cold half as a range of its
+   own, which is what lets a profile charge it to this filter instead of to
+   whichever C function the linker happened to put in front of it. */
+#define LPC32_COLD .section .text.flac_lpc_32_cold,"ax",%progbits
 
     /* Shift the accumulator down by qlevel, add the residual waiting at
        p[order], store it back, and step the window on by one sample.  The
@@ -351,37 +457,89 @@ lpc_decode_arm:
     subs    r12, r12, #32             @ one output done; the borrow out of the
     .endm                             @ count field is the loop's exit test
 
-    /* The high-order tail.  Orders above 8 cannot hold their coefficients, so
-       those loops keep the accumulator in r10:r11 and have r2 free for a
-       fourth history sample -- the order is a constant there, so nothing
-       needs to remember it. */
-    .macro  HTAIL order
-    ldr     r2, [r0]                  @ residual
-    and     lr, r12, #31              @ qlevel
-    mov     r10, r10, lsr lr
-    rsb     lr, lr, #32
-    orr     r10, r10, r11, lsl lr
-    add     r10, r2, r10
-    str     r10, [r0], #-(4 * \order - 4)
-    subs    r12, r12, #32
+    /* Orders 9..12: two outputs per pass, y0 at p[order] and y1 after it.
+       History ascends from p[0], coefficients descend from coeffs[order-1],
+       so h[k] meets c(k) = coeffs[order-1-k] in y0 and c(k-1) in y1.  y1's
+       last term is coeffs[0] times y0 itself, added once y0 is known, so
+       coeffs[0] is kept in r2.  Sums in r4:r5 (y0) and r6:r7 (y1), history
+       in r8 and r9, coefficients in r10, r11 and lr.
+
+       One step: two taps of each sum.  The coefficient that carries over to
+       the next step alternates between r10 and r11, so the pair loaded here
+       never lands in a register the next instruction reads. */
+    .macro  PAIR64_STEP cur, nxt
+    smlal   r4, r5, r9, \cur          @ y0 += h[k] * c(k)
+    ldmia   r0!, { r8, r9 }           @ h[k+1], h[k+2]
+    ldmdb   r3!, { \nxt, lr }         @ c(k+2), c(k+1)
+    smlal   r6, r7, r8, \cur          @ y1 += h[k+1] * c(k)
+    smlal   r4, r5, r8, lr            @ y0 += h[k+1] * c(k+1)
+    smlal   r6, r7, r9, lr            @ y1 += h[k+2] * c(k+1)
     .endm
 
-    /* One pass of four taps, for the orders that cannot keep their
-       coefficients in registers.  Both operand streams burst: coefficients
-       descend from the top, history ascends.  r2 is the fourth sample
-       register, which is what lets the samples come in one ldm of four
-       rather than three plus a single load. */
-    .macro  HCHUNK first
-    ldmdb   r3!, { r4-r7 }
-    ldmia   r0!, { r2, r8, r9, lr }
-    .ifnb \first
-    smull   r10, r11, r2, r7          @ opens the accumulator, so it never
-    .else                             @ has to be zeroed
-    smlal   r10, r11, r2, r7
+    /* A whole order.  r12 counts outputs as everywhere else; an odd one left
+       over goes to the generic loop, in DRAM, which \far says how to reach. */
+    .macro  PAIR64 order, far
+    ldr     r2, [r1]                  @ coeffs[0]
+    subs    r12, r12, #32             @ count field: outputs left - 2
+    bmi     2f
+1:
+    add     r3, r1, #4 * \order
+    ldr     r9, [r0], #4              @ h[0]
+    ldr     r10, [r3, #-4]!           @ c(0) = coeffs[order-1]
+    smull   r4, r5, r9, r10           @ the first step opens both sums
+    ldmia   r0!, { r8, r9 }
+    ldmdb   r3!, { r11, lr }
+    smull   r6, r7, r8, r10
+    smlal   r4, r5, r8, lr
+    smlal   r6, r7, r9, lr
+    PAIR64_STEP r11, r10
+    PAIR64_STEP r10, r11
+    PAIR64_STEP r11, r10
+  .if (\order - 1) / 2 == 5
+    PAIR64_STEP r10, r11
+  .endif
+  .if \order & 1                      @ odd: y0's last tap
+    .if (\order - 1) / 2 == 5
+    smlal   r4, r5, r9, r11
+    .else
+    smlal   r4, r5, r9, r10
     .endif
-    smlal   r10, r11, r8, r6
-    smlal   r10, r11, r9, r5
-    smlal   r10, r11, lr, r4
+  .else                               @ even: two taps of y0, one of y1 left
+    ldr     r8, [r0], #4              @ h[order-1]
+    .if (\order - 1) / 2 == 5
+    smlal   r4, r5, r9, r11
+    smlal   r6, r7, r8, r11
+    .else
+    smlal   r4, r5, r9, r10
+    smlal   r6, r7, r8, r10
+    .endif
+    smlal   r4, r5, r8, r2            @ ... c(order-1) is coeffs[0]
+  .endif
+    and     lr, r12, #31              @ qlevel
+    rsb     r3, lr, #32               @ a shift by 32 gives 0, as qlevel 0
+    ldmia   r0, { r10, r11 }          @ the two residuals, at p[order]
+    mov     r4, r4, lsr lr
+    orr     r4, r4, r5, lsl r3
+    add     r10, r10, r4              @ y0
+    smlal   r6, r7, r10, r2           @ y1's last term needs y0
+    mov     r6, r6, lsr lr
+    orr     r6, r6, r7, lsl r3
+    add     r11, r11, r6              @ y1
+    stmia   r0, { r10, r11 }
+    sub     r0, r0, #4 * \order - 8   @ the window moves on two samples
+    subs    r12, r12, #64
+    bpl     1b
+2:
+    adds    r12, r12, #32             @ count field back to outputs left - 1
+    bmi     3f
+    mov     r2, #\order               @ one left: the generic loop takes it
+  .ifb \far
+    ldr     pc, .Lx_pgen
+  .else
+    b       .Lx_highgen
+  .endif
+3:
+    ldmpc   regs=r4-r11
     .endm
 
     LPC32_HOT
@@ -408,34 +566,15 @@ flac_lpc_32_arm:
     b       .Lx_order6
     b       .Lx_order7
     b       .Lx_order8
-    ldr     pc, .Lx_pgen              @ 9  -- generic loop
+    ldr     pc, .Lx_p9                @ 9 and 11 are rarer, so in DRAM
     b       .Lx_order10
-    ldr     pc, .Lx_pgen              @ 11 -- generic loop
-@ order 12 is the last table slot, so it falls through.  10 and 12 get their
-@ own loops because they are what the reference encoder's -8 actually emits;
-@ 9 and 11 would too if there were IRAM to put them in.
+    ldr     pc, .Lx_p11
+@ order 12 is the last table slot, so it falls through.  10 and 12 are what
+@ the reference encoder's -8 mostly emits, so they get the IRAM.
 .Lx_order12:
-    add     r3, r1, #48               @ coefficient pointer, descending
-.Lx_loop12:
-    HCHUNK  first
-    HCHUNK
-    HCHUNK
-    HTAIL   12
-    bpl     .Lx_order12
-    ldmpc   regs=r4-r11
-
+    PAIR64  12
 .Lx_order10:
-    add     r3, r1, #40
-.Lx_loop10:
-    ldmdb   r3!, { r4, r5 }           @ coeffs[8..9], the two odd taps
-    ldmia   r0!, { r2, r8 }           @ p[0..1]
-    smull   r10, r11, r2, r5
-    smlal   r10, r11, r8, r4
-    HCHUNK
-    HCHUNK
-    HTAIL   10
-    bpl     .Lx_order10
-    ldmpc   regs=r4-r11
+    PAIR64  10
 @ order 8 is reached from the table above
 .Lx_order8:
     ldmia   r1, { r4-r11 }            @ coeffs[0..7], resident for the call
@@ -555,11 +694,17 @@ flac_lpc_32_arm:
     bpl     .Lx_loop1
     ldmpc   regs=r4-r11
 
-    /* Orders 9..32.  Four taps a pass, both operand streams bursted: the
-       coefficients descend from coeffs + order and the history ascends, so the
-       inner loop ends when the coefficient pointer reaches coeffs and needs no
-       counter of its own.  order & 3 leftover taps go first, one at a time. */
-.Lx_highgen:                          @ orders 9, 11 and 13..32
+.Lx_order9:
+    PAIR64  9, far
+.Lx_order11:
+    PAIR64  11, far
+
+    /* Orders 13..32, and the odd last output of 9..12.  Four taps a pass,
+       both operand streams bursted: the coefficients descend from coeffs +
+       order and the history ascends, so the inner loop ends when the
+       coefficient pointer reaches coeffs and needs no counter of its own.
+       order & 3 leftover taps go first, one at a time. */
+.Lx_highgen:                          @ orders 13..32, and one odd output
 .Lx_dnext:
     add     r3, r1, r2, lsl #2        @ coefficient pointer, descending
     mov     r10, #0                   @ 64-bit accumulator (r10 low)
@@ -602,6 +747,8 @@ flac_lpc_32_arm:
 .Lx_p2:   .word .Lx_order2
 .Lx_p3:   .word .Lx_order3
 .Lx_pgen: .word .Lx_highgen
+.Lx_p9:   .word .Lx_order9
+.Lx_p11:  .word .Lx_order11
 
 #if ARM_ARCH >= 5
 /* ---------------------------------------------------------------------------
@@ -808,3 +955,288 @@ flac_lpc_32_arm_narrow:
 .Ln_ret:
     ldmpc   regs=r4-r11
 #endif /* ARM_ARCH >= 5 */
+
+/* ---------------------------------------------------------------------------
+   Rice residual decoding, the inner loop of decode_residuals.
+
+   int flac_rice_decode_arm(int32_t *out, int n, int k, GetBitContext *gb);
+
+   Decodes up to n residuals with Rice parameter k, returns how many it
+   actually produced and leaves gb->index exactly where C would have left it.
+   The caller decodes whatever is left -- so every case this does not handle
+   is handled by the C it was extracted from, and nothing here can change what
+   a stream decodes to.
+
+   Why it is worth writing.  ALT_BITSTREAM_READER keeps no cache: every
+   UPDATE_CACHE rebuilds the 32-bit window out of four unaligned byte loads,
+   once per residual, which measured 13.97 cycles per sample on ARM7TDMI --
+   24% of decode_residuals and the single largest line left in the decoder.
+   This keeps the window in two registers and refills it from *aligned* words,
+   which is what upstream FFmpeg's A32_BITSTREAM_READER does and what it
+   selects for ARCH_ARM && !HAVE_FAST_UNALIGNED; Rockbox has that selection
+   commented out.
+
+   It decodes only the case that occurs, and bails out otherwise:
+
+     - the leading-zero run must be 7 or fewer.  Measured over four streams,
+       99.91% to 99.97% of residuals qualify; the distribution is 43% zero,
+       74% one or fewer, 96% three or fewer.
+     - k must be 17 or less, which the caller checks once per partition.  With
+       both, a code is at most 25 bits, and the window always holds more.
+     - it stops rather than read past buffer_end.
+
+   The cache is two whole words of the stream and a bit position in the
+   first.  Each residual reads a 32-bit window at that position and adds the
+   code's length to it; nothing is shifted along.  Once the position passes
+   32 the second word becomes the first and the next word is loaded, so the
+   position is 0-31 at every decode and the window has more than 32 bits.
+
+   Registers through the loop:
+
+     r0 out      r1 residuals left   r2 k          r3 scratch
+     r4 first word   r5 second word  r6 bit position in r4
+     r7 next word to load, aligned   r8 leading-zero table
+     r9 31-k     r10 k+1             r11 buffer_end-4    ip, lr scratch
+ */
+
+/* One residual: the 32-bit window at the bit position, its unary run, the
+   k bits after it, the sign folded back out, and the position moved past the
+   code.  Bails to \bail if the run is longer than 7, leaving it for C. */
+.macro RICE_DECODE bail
+    rsb     r3, r6, #32
+    mov     ip, r4, lsl r6
+    orr     ip, ip, r5, lsr r3        @ a shift by 32 gives 0, so r6 = 0 works
+#if ARM_ARCH >= 5
+    clz     lr, ip                    @ leading zeros, the unary run
+#else
+    mov     lr, ip, lsr #24
+    ldrb    lr, [r8, lr]              @ 8 means "8 or more": bail
+#endif
+    cmp     lr, #7
+    bhi     \bail
+    rsb     r3, lr, r9                @ 31 - k - z
+    mov     r3, ip, lsr r3            @ the 1 bit, then the k low bits
+    sub     ip, lr, #1
+    add     r3, r3, ip, lsl r2        @ + (z-1) << k  == quotient<<k | rest
+    movs    r3, r3, lsr #1            @ fold the sign back out: halve, and
+    mvncs   r3, r3                    @ complement if the low bit was set
+    str     r3, [r0], #4              @ z<=7 and k<=17 bound the code at 2^20,
+                                      @ so the 0x80000000 the caller rejects
+                                      @ cannot arise here
+    add     lr, lr, r10               @ bits this code used: z + 1 + k
+    add     r6, r6, lr
+.endm
+
+/* A word as loaded, little-endian, into stream order. */
+.macro RICE_BSWAP reg, tmp
+    eor     \tmp, \reg, \reg, ror #16
+    bic     \tmp, \tmp, #0xff0000
+    mov     \reg, \reg, ror #8
+    eor     \reg, \reg, \tmp, lsr #8
+.endm
+
+/* The position has passed 32: the second word becomes the first, and the
+   next word is loaded behind it. */
+.macro RICE_FILL
+    mov     r4, r5
+    ldr     r5, [r7], #4
+    sub     r6, r6, #32
+    RICE_BSWAP r5, r3
+.endm
+
+/* This lives in DRAM by default: the PP502x codec IRAM window has no room
+   for it, and a dense loop like this one is cache-resident in any case (§8).
+   Define FLAC_RICE_IRAM to move it, once there is room. */
+#if defined(USE_IRAM) && defined(FLAC_RICE_IRAM)
+    .section .icode,"ax",%progbits
+#else
+    .section .text.flac_rice_decode,"ax",%progbits
+#endif
+    .align  2
+    .global flac_rice_decode_arm
+flac_rice_decode_arm:
+    stmfd   sp!, { r4-r11, lr }
+    subs    r1, r1, #0
+    ble     .Lr_none
+    cmp     r2, #17                   @ above this, leave it to C; the caller
+    bhi     .Lr_none                  @ checks too, but do not depend on it
+    ldr     r12, [r3, #8]             @ gb->index, in bits
+    ldr     lr, [r3]                  @ gb->buffer
+    stmfd   sp!, { r1, r3, lr }       @ n, gb, buffer
+    ldr     r11, [r3, #4]             @ gb->buffer_end
+    sub     r11, r11, #4              @ last address a word load may start at
+
+    add     r7, lr, r12, lsr #3       @ byte holding the next bit
+    and     r3, r7, #3                @ ... and how far into its word it is
+    bic     r7, r7, #3
+    and     r6, r12, #7
+    add     r6, r6, r3, lsl #3        @ bit position within that word
+    add     r3, r7, #4                @ both words must lie inside the buffer
+    cmp     r3, r11
+    bhi     .Lr_abort
+    ldr     r4, [r7], #4
+    ldr     r5, [r7], #4
+    RICE_BSWAP r4, r3
+    RICE_BSWAP r5, r3
+
+    rsb     r9, r2, #31               @ 31-k
+    add     r10, r2, #1               @ k+1
+#if ARM_ARCH < 5
+    adr     r8, .Lr_lztab
+#endif
+
+.Lr_pair:
+    /* Two residuals per pass, so the count and the loop branch are paid once
+       per pair.  r1 counts what is left after the pair in hand.  The position
+       is checked between the two as well as after them: one code can carry
+       it past 32, and the window is only good below that. */
+    subs    r1, r1, #2
+    blt     .Lr_last                  @ one or none left
+    RICE_DECODE .Lr_bail2
+    cmp     r6, #32
+    bhs     .Lr_fill1                 @ the less common case, out of line
+.Lr_second:
+    RICE_DECODE .Lr_bail1
+    cmp     r6, #32
+    blo     .Lr_pair
+    cmp     r7, r11                   @ refill, if there is a word to read
+    bhi     .Lr_done
+    RICE_FILL
+    b       .Lr_pair
+
+.Lr_fill1:
+    cmp     r7, r11
+    addhi   r1, r1, #1                @ the second of the pair is not done
+    bhi     .Lr_done
+    RICE_FILL
+    b       .Lr_second
+
+.Lr_last:                             @ r1 is -1 with one left, -2 with none
+    adds    r1, r1, #1
+    beq     .Lr_second                @ one: decode it with r1 = 0 after
+    mov     r1, #0
+    b       .Lr_done
+.Lr_bail2:                            @ a run too long for the assembly:
+    add     r1, r1, #1                @ give back the residuals not decoded,
+.Lr_bail1:                            @ both of the pair, or just the second
+    add     r1, r1, #1
+
+.Lr_done:
+    ldmfd   sp!, { r2, r3, lr }       @ n, gb, buffer
+    sub     r0, r7, lr                @ r4 was loaded from r7 - 8, so the
+    mov     r0, r0, lsl #3            @ index is 8*(r7-buffer) - 64 + r6
+    sub     r0, r0, #64
+    add     r0, r0, r6
+    str     r0, [r3, #8]              @ gb->index
+    sub     r0, r2, r1                @ residuals decoded
+    ldmpc   regs=r4-r11
+.Lr_abort:                            @ nothing decoded, gb untouched
+    add     sp, sp, #12
+.Lr_none:
+    mov     r0, #0
+    ldmpc   regs=r4-r11
+
+#if ARM_ARCH < 5
+.Lr_lztab:
+    .byte  8, 7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4
+    .byte  3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3
+    .byte  2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
+    .byte  2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
+    .byte  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+    .byte  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+    .byte  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+    .byte  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+    .byte  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+#endif
+
+/* Channel decorrelation and the shift to FLAC_OUTPUT_DEPTH, the loop at the
+   end of flac_decode_frame():
+
+   void flac_decorrelate_<mode>_arm(int32_t *ch0, int32_t *ch1, int n,
+                                    int scale);
+
+   Both channels are rewritten in place, as left and right, each shifted up
+   by scale.  The shift is folded into the arithmetic, (a<<s) + (b<<s) for
+   (a+b)<<s and so on, which is the same modulo 2^32 and saves an
+   instruction per pair.  Four pairs go per pass, through ldm and stm, and a
+   scalar loop takes the rest of a block that is not a multiple of four.
+
+   Dense enough to stay cache-resident, so it lives in DRAM (§8). */
+
+/* One pair, in place: \a is channel 0 and \b channel 1 on entry.  Mid/side
+   leaves left in \b and right in \a; every other mode leaves left in \a. */
+.macro DECORR_PAIR mode, a, b
+.ifc \mode,indep
+    mov     \a, \a, lsl r3
+    mov     \b, \b, lsl r3
+.endif
+.ifc \mode,ls                         @ left, side
+    mov     \a, \a, lsl r3            @ left
+    sub     \b, \a, \b, lsl r3        @ right = left - side
+.endif
+.ifc \mode,rs                         @ side, right
+    mov     \b, \b, lsl r3            @ right
+    add     \a, \b, \a, lsl r3        @ left = side + right
+.endif
+.ifc \mode,ms                         @ mid, side
+    sub     \a, \a, \b, asr #1        @ mid - side/2
+    mov     \a, \a, lsl r3            @ right
+    add     \b, \a, \b, lsl r3        @ left = right + side
+.endif
+.endm
+
+.macro DECORR_FN name, mode
+    .align  2
+    .global \name
+\name:
+    stmfd   sp!, { r4-r11, lr }
+    subs    r2, r2, #4
+    blt     2f
+1:
+    ldmia   r0, { r4-r7 }
+    ldmia   r1, { r8-r11 }
+    DECORR_PAIR \mode, r4, r8
+    DECORR_PAIR \mode, r5, r9
+    DECORR_PAIR \mode, r6, r10
+    DECORR_PAIR \mode, r7, r11
+.ifc \mode,ms
+    stmia   r0!, { r8-r11 }
+    stmia   r1!, { r4-r7 }
+.else
+    stmia   r0!, { r4-r7 }
+    stmia   r1!, { r8-r11 }
+.endif
+    subs    r2, r2, #4
+    bge     1b
+2:
+    adds    r2, r2, #4
+    beq     4f
+3:
+    ldr     r4, [r0]
+    ldr     r8, [r1]
+    DECORR_PAIR \mode, r4, r8
+.ifc \mode,ms
+    str     r8, [r0], #4
+    str     r4, [r1], #4
+.else
+    str     r4, [r0], #4
+    str     r8, [r1], #4
+.endif
+    subs    r2, r2, #1
+    bne     3b
+4:
+    ldmpc   regs=r4-r11
+.endm
+
+    .section .text.flac_decorrelate,"ax",%progbits
+    DECORR_FN flac_decorrelate_indep_arm, indep
+    DECORR_FN flac_decorrelate_ls_arm, ls
+    DECORR_FN flac_decorrelate_rs_arm, rs
+    DECORR_FN flac_decorrelate_ms_arm, ms
