@@ -231,6 +231,12 @@ int main(int argc, char **argv) {
 #define BUTTON_MULTIMEDIA_VOLUME_DOWN 64
 #define BUTTON_SCROLL_FWD 128
 #define BUTTON_SCROLL_BACK 256
+#define BUTTON_MULTIMEDIA_PLAYPAUSE 512
+#define BUTTON_MULTIMEDIA_PREV 1024
+#define BUTTON_MULTIMEDIA_NEXT 2048
+#define HZ 100
+#define TIME_AFTER(a, b) ((long)(b) - (long)(a) < 0)
+static long current_tick;
 int mock_poll(struct pollfd *, nfds_t, int);
 #define poll mock_poll
 #define read mock_read
@@ -243,7 +249,7 @@ static void button_queue_post(int button, int data) { (void)button; (void)data; 
 static int mode, polled, closed;
 int mock_poll(struct pollfd *p, nfds_t n, int timeout) {
     (void)timeout; assert(n == NDEV && ++polled < 4);
-    p[KEYS].revents = p[WHEEL].revents = 0;
+    p[KEYS].revents = p[WHEEL].revents = p[AVRCP].revents = 0;
     if (mode == 0 && polled == 1) p[KEYS].revents = POLLIN;
     if (mode == 1 && p[KEYS].fd >= 0) p[KEYS].revents = POLLHUP;
     if (mode == 2 && p[WHEEL].fd >= 0) p[WHEEL].revents = POLLNVAL;
@@ -256,7 +262,7 @@ ssize_t mock_read(int fd, void *buf, size_t size) {
 }
 int mock_close(int fd) { assert(fd == 42 || fd == 43); closed++; return 0; }
 int main(void) {
-    fds[KEYS].fd = 42; fds[WHEEL].fd = 43;
+    fds[KEYS].fd = 42; fds[WHEEL].fd = 43; fds[AVRCP].fd = 44; /* no rescan */
     assert(button_read_device() == BUTTON_PLAY);
     mode = 1; polled = 0;
     assert(button_read_device() == 0 && fds[KEYS].fd == -1 && closed == 1);

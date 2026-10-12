@@ -44,10 +44,20 @@ static const struct button_mapping button_context_standard[]  = {
     { ACTION_STD_PREVREPEAT,    BUTTON_SCROLL_BACK|BUTTON_REPEAT,   BUTTON_NONE },
     { ACTION_STD_NEXT,          BUTTON_SCROLL_FWD,                  BUTTON_NONE },
     { ACTION_STD_NEXTREPEAT,    BUTTON_SCROLL_FWD|BUTTON_REPEAT,    BUTTON_NONE },
+#ifdef SHANLING_Q2
+    /* The side keys are the Q2's previous and next: they skip a track from
+     * any screen, as on stock, via the multimedia keys default_event_handler
+     * takes. So Return is the only back key: up one level, everywhere. */
+    { BUTTON_MULTIMEDIA_PREV,   BUTTON_LEFT|BUTTON_REL,             BUTTON_LEFT },
+    { BUTTON_MULTIMEDIA_NEXT,   BUTTON_RIGHT|BUTTON_REL,            BUTTON_RIGHT },
+    { ACTION_STD_OK,            BUTTON_SELECT|BUTTON_REL,           BUTTON_SELECT },
+    { ACTION_STD_CANCEL,        BUTTON_MENU|BUTTON_REL,             BUTTON_MENU },
+#else
     { ACTION_STD_CANCEL,        BUTTON_LEFT,                        BUTTON_NONE },
     { ACTION_STD_OK,            BUTTON_RIGHT,                       BUTTON_NONE },
     { ACTION_STD_OK,            BUTTON_SELECT|BUTTON_REL,           BUTTON_SELECT },
     { ACTION_STD_MENU,          BUTTON_MENU|BUTTON_REL,             BUTTON_MENU },
+#endif
     { ACTION_STD_QUICKSCREEN,   BUTTON_MENU|BUTTON_REPEAT,          BUTTON_MENU },
     { ACTION_STD_CONTEXT,       BUTTON_SELECT|BUTTON_REPEAT,        BUTTON_SELECT },
     { ACTION_STD_CANCEL,        BUTTON_PLAY|BUTTON_REPEAT,          BUTTON_NONE },
@@ -59,23 +69,21 @@ static const struct button_mapping button_context_tree[]  = {
     { ACTION_TREE_WPS,          BUTTON_PLAY|BUTTON_REL,      BUTTON_PLAY },
     { ACTION_TREE_STOP,         BUTTON_PLAY|BUTTON_REPEAT,   BUTTON_PLAY },
     { ACTION_TREE_HOTKEY,       BUTTON_SELECT|BUTTON_PLAY,   BUTTON_NONE },
-#ifdef SHANLING_Q2
-    /* Return is the Q2's only back key (the side keys are left/right), so it
-     * goes up one folder as the H2's Back does; at the root the tree itself
-     * exits to the main menu. Hold stays the quick screen. */
-    { ACTION_STD_CANCEL,        BUTTON_MENU|BUTTON_REL,      BUTTON_MENU },
-#endif
 
     LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_STD)
 }; /* button_context_tree */
 
 static const struct button_mapping button_context_tree_scroll_lr[]  = {
     { ACTION_NONE,              BUTTON_LEFT,                BUTTON_NONE },
+#ifndef SHANLING_Q2 /* a tap skips (button_context_standard), a hold scrolls */
     { ACTION_STD_CANCEL,        BUTTON_LEFT|BUTTON_REL,     BUTTON_LEFT },
     { ACTION_TREE_ROOT_INIT,    BUTTON_LEFT|BUTTON_REPEAT,  BUTTON_LEFT },
+#endif
     { ACTION_TREE_PGLEFT,       BUTTON_LEFT|BUTTON_REPEAT,  BUTTON_NONE },
     { ACTION_NONE,              BUTTON_RIGHT,               BUTTON_NONE },
+#ifndef SHANLING_Q2
     { ACTION_STD_OK,            BUTTON_RIGHT|BUTTON_REL,    BUTTON_RIGHT },
+#endif
     { ACTION_TREE_PGRIGHT,      BUTTON_RIGHT|BUTTON_REPEAT, BUTTON_NONE },
     LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_CUSTOM|CONTEXT_TREE),
 }; /* button_context_tree_scroll_lr */
