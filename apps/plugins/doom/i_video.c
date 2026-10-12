@@ -167,6 +167,10 @@ void I_ShutdownGraphics(void)
 #define DOOMBUTTON_SHOOT      BUTTON_PLAY
 #define DOOMBUTTON_ENTER      BUTTON_SELECT
 #define DOOMBUTTON_OPEN       BUTTON_MENU
+#ifdef SHANLING_Q2
+/* Virtual button: the Q2 has no Hold switch. */
+#define DOOMBUTTON_ESC        0x00000080
+#endif
 
 #elif CONFIG_KEYPAD == IAUDIO_X5M5_PAD
 #define DOOMBUTTON_UP      BUTTON_UP
@@ -779,6 +783,14 @@ static inline void getkey()
 #endif
 #endif
    newbuttonstate = rb->button_status();
+#ifdef SHANLING_Q2
+   if ((newbuttonstate & (BUTTON_LEFT | BUTTON_RIGHT)) ==
+       (BUTTON_LEFT | BUTTON_RIGHT))
+   {
+      newbuttonstate &= ~(BUTTON_LEFT | BUTTON_RIGHT);
+      newbuttonstate |= DOOMBUTTON_ESC;
+   }
+#endif
 #ifdef DOOMBUTTON_SCROLLWHEEL
    newbuttonstate |= read_scroll_wheel();
 #endif

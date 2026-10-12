@@ -173,6 +173,7 @@ Run from the repository root:
     python3 tools/shanlingq2/test_runtime.py
     python3 tools/shanlingq2/test_gain.py
     python3 tools/shanlingq2/test_filter.py
+    python3 tools/shanlingq2/test_doom.py
     cc tools/shanlingq2/test_wheel.c -o /tmp/q2-wheel && /tmp/q2-wheel
 
 These exercise actual C functions with mocked hardware/ALSA boundaries. The
@@ -180,6 +181,13 @@ writer polls every 5 ms during playback and every 100 ms while stopped; the
 latter trades up to 100 ms of writer response for fewer idle wakeups. Playback
 startup still primes the PCM synchronously. Battery runtime and reconnect
 behaviour need checks on the Q2 itself.
+
+Doom controls
+-------------
+Press both side buttons (Previous + Next) together to open or close the
+in-game menu. The Q2 has no iPod Hold switch. Press Return to cycle up to
+Quit Game, press the wheel centre to select it, then press it again to
+confirm and return to Rockbox.
 
 2.1 device integration refinements
 ----------------------------------
