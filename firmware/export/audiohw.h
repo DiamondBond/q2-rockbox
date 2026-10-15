@@ -216,13 +216,15 @@ struct sound_settings_info
 #include "nwzlinux_codec.h"
 #elif defined(HAVE_CS4398)
 #include "cs4398.h"
+#elif defined(HAVE_CS42L51)
+#include "cs42l51.h"
 #elif defined(HAVE_ES9018)
 #include "es9018.h"
 #elif defined(HAVE_ES9218)
 #include "es9218.h"
 #elif (CONFIG_PLATFORM & PLATFORM_ANDROID)
 #include "android_codec.h"
-#elif ((CONFIG_PLATFORM & (PLATFORM_SDL | PLATFORM_GAME_CONSOLE)) | defined(RG_NANO))
+#elif ((CONFIG_PLATFORM & PLATFORM_SDL) | defined(RG_NANO))
 #include "sdl_codec.h"
 #elif defined(DX50)
 #include "codec-dx50.h"
@@ -244,6 +246,8 @@ struct sound_settings_info
 #include "hibylinux_codec.h"
 #elif defined(HAVE_SHANLINGQ2_CODEC)
 #include "shanlingq2_codec.h"
+#elif defined(HAVE_TEAKLITE_CODEC)
+#include "teaklite_codec.h"
 #endif
 
 #if defined(HAVE_X1000_ICODEC_REC) && !defined(HAVE_X1000_ICODEC_PLAY)

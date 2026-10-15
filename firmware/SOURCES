@@ -633,6 +633,8 @@ drivers/audio/df1704.c
 drivers/audio/pcm1792.c
 #elif defined (HAVE_CS4398)
 drivers/audio/cs4398.c
+#elif defined (HAVE_CS42L51)
+drivers/audio/cs42l51.c
 #elif defined (HAVE_ES9018)
 drivers/audio/es9018.c
 #elif defined (HAVE_ES9218)
@@ -1903,6 +1905,16 @@ target/mips/ingenic_x1000/sdmmc-x1000-common.c
 target/mips/ingenic/spl-nand-ingenic.c
 #endif /* EROS_QN */
 
+#if defined(AGPTEK_ROCKER_NATIVE)
+target/mips/ingenic_x1000/agptekrocker/audiohw-agptekrocker.c
+target/mips/ingenic_x1000/agptekrocker/backlight-agptekrocker.c
+target/mips/ingenic_x1000/agptekrocker/button-agptekrocker.c
+target/mips/ingenic_x1000/agptekrocker/lcd-agptekrocker.c
+target/mips/ingenic_x1000/agptekrocker/power-agptekrocker.c
+target/mips/ingenic_x1000/sdmmc-x1000-common.c
+target/mips/ingenic/spl-nand-ingenic.c
+#endif /* AGPTEK_ROCKER_NATIVE */
+
 #if defined(SAMSUNG_YH820) || defined(SAMSUNG_YH920) || defined(SAMSUNG_YH925)
 target/arm/samsung/akcodec-yh82x_yh92x.c
 target/arm/samsung/button-yh82x_yh92x.c
@@ -2133,6 +2145,7 @@ target/hosted/game_console/3ds/lcd-bitmap-3ds.c
 target/hosted/game_console/3ds/lc-program-resolver.c
 target/hosted/game_console/3ds/luminance-3ds.c
 target/hosted/game_console/3ds/pcm-3ds.c
+target/hosted/game_console/3ds/pcm-recording-3ds.c
 target/hosted/game_console/3ds/powermgmt-3ds.c
 target/hosted/game_console/3ds/system-3ds.c
 #endif /* N3DS */
