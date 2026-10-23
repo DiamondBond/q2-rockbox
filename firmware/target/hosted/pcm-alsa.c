@@ -922,10 +922,14 @@ static void sink_dma_start(const void *addr, size_t size)
                 if (err < 0 || !dma_playing)
                     return;
 
-                err = snd_pcm_start(handle);
-                if (err < 0) {
-                    logf("start error: %s", snd_strerror(err));
-                    return; /* the writer/callback handles recovery */
+                /* Filling may already have crossed ALSA's start threshold. */
+                if (snd_pcm_state(handle) == SND_PCM_STATE_PREPARED)
+                {
+                    err = snd_pcm_start(handle);
+                    if (err < 0) {
+                        logf("start error: %s", snd_strerror(err));
+                        return; /* the writer/callback handles recovery */
+                    }
                 }
 
                 break;

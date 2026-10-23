@@ -33,6 +33,8 @@ typedef int16_t sample_t;
 #define SND_PCM_STATE_DRAINING 3
 #define SND_PCM_STATE_SETUP 4
 #define SND_PCM_STATE_PREPARED 5
+#define SND_PCM_STATE_RUNNING 6
+#define AUDIOHW_MUTE_ON_STOP
 static snd_pcm_t device, *handle = &device;
 static sample_t *frames;
 static const int channels = 2;
@@ -42,6 +44,12 @@ static bool writer_run, dma_playing;
 static pthread_mutex_t pcm_mtx = PTHREAD_MUTEX_INITIALIZER;
 static int copied, calls, script[8], count, at, output[32], written;
 static int state, start_error, reopened;
+static bool muted, autostart;
+static const void *pcm_data;
+static size_t pcm_size;
+static void audiohw_mute(int mute) { muted = mute; }
+static int snd_pcm_drain(snd_pcm_t *p) { (void)p; state = SND_PCM_STATE_SETUP; return 0; }
+static int snd_pcm_prepare(snd_pcm_t *p) { (void)p; state = SND_PCM_STATE_PREPARED; return 0; }
 static unsigned slept;
 static bool copy_frames(void) {
     for (int i = 0; i < 8; i++) frames[i] = copied * 8 + i;
@@ -58,6 +66,7 @@ static int snd_pcm_writei(snd_pcm_t *p, const sample_t *buf, long n) {
     int result = script[at++];
     assert(result <= n);
     for (int i = 0; i < result * channels; i++) output[written++] = buf[i];
+    if (autostart && result > 0) state = SND_PCM_STATE_RUNNING;
     return result;
 }
 static int snd_pcm_recover(snd_pcm_t *p, int err, int silent) {
@@ -65,7 +74,12 @@ static int snd_pcm_recover(snd_pcm_t *p, int err, int silent) {
     return err == -EPIPE ? 0 : err;
 }
 static int snd_pcm_state(snd_pcm_t *p) { (void)p; return state; }
-static int snd_pcm_start(snd_pcm_t *p) { (void)p; return start_error; }
+static int snd_pcm_start(snd_pcm_t *p) {
+    (void)p;
+    if (state != SND_PCM_STATE_PREPARED) return -EBADFD;
+    if (!start_error) state = SND_PCM_STATE_RUNNING;
+    return start_error;
+}
 static int writer_reopen(void) { reopened++; return -ENODEV; }
 #define HAVE_HEADPHONE_DETECTION
 #define DEFAULT_PLAYBACK_DEVICE "plughw:0,0"
@@ -92,7 +106,7 @@ static int snd_pcm_drop(snd_pcm_t *p) { (void)p; return 0; }
 static int set_hwparams(snd_pcm_t *p, unsigned long r) { (void)p; (void)r; params_set++; return 0; }
 static int set_swparams(snd_pcm_t *p) { (void)p; return 0; }
 '''
-source += '\n'.join(function(n) for n in ('playback_fill', 'writer_main', 'alsadev_cleanup', 'sink_set_freq_nolock'))
+source += '\n'.join(function(n) for n in ('playback_fill', 'writer_main', 'alsadev_cleanup', 'sink_set_freq_nolock', 'sink_dma_stop', 'sink_dma_start'))
 source += r'''
 int main(void) {
     frames = calloc(8, sizeof(*frames));
@@ -126,6 +140,21 @@ int main(void) {
     current_alsa_device = DEFAULT_PLAYBACK_DEVICE;
     writer_run = true; loops = 60;
     writer_main(NULL); assert(reopened == 1);
+    /* ALSA can start itself at the write threshold while priming. Each
+     * skip/selection must still unmute, just as an explicit start does. */
+    for (int automatic = 0; automatic < 2; automatic++) {
+        autostart = automatic;
+        for (int track = 0; track < 3; track++) {
+            sink_dma_stop(); assert(muted && !dma_playing);
+            at = 0; count = 1; script[0] = 4; written = 0;
+            sink_dma_start(frames, 16);
+            assert(state == SND_PCM_STATE_RUNNING && dma_playing && !muted);
+        }
+    }
+    /* A failed explicit start keeps the output muted. */
+    autostart = false; start_error = -ENODEV;
+    sink_dma_stop(); at = 0; count = 1; written = 0;
+    sink_dma_start(frames, 16); assert(muted);
     frames[0] = 0;
     /* A rate change reopens a writer-fed PCM (Bluetooth) and reconfigures
      * one with a SIGIO handler (the DAC) in place. */
