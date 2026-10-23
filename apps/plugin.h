@@ -180,7 +180,7 @@ int plugin_open(const char *plugin, const char *parameter);
  * when this happens please take the opportunity to sort in
  * any new functions "waiting" at the end of the list.
  */
-#define PLUGIN_API_VERSION 285
+#define PLUGIN_API_VERSION 286
 
 /* 239 Marks the removal of ARCHOS HWCODEC and CHARCELL */
 
@@ -610,7 +610,7 @@ struct plugin_api {
     void (*reset_poweroff_timer)(void);
     void (*set_sleeptimer_duration)(int minutes);
     int (*get_sleep_timer)(void);
-#if (CONFIG_PLATFORM & PLATFORM_NATIVE)
+#if (CONFIG_PLATFORM & PLATFORM_NATIVE) || defined(SONY_PSP)
 #if defined(CPU_COLDFIRE)
     int (*system_memory_guard)(int newmode);
 #endif
@@ -1051,9 +1051,15 @@ struct plugin_api {
 #ifdef HAVE_HW_H264
     const struct hw_h264_api *hw_h264;
 #endif
+#ifdef HAVE_JPEG
+    int (*clip_jpeg_fd)(int fd, int flags, unsigned long jpeg_size,
+                        struct bitmap *bm, int maxsize, int format,
+                        const struct custom_format *cformat);
+#endif
 
     /* new stuff at the end, sort into place next time
        the API gets incompatible */
+    void (*settings_apply)(bool read_disk);
 };
 
 /* plugin header */

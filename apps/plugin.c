@@ -527,7 +527,7 @@ static const struct plugin_api rockbox_api = {
     reset_poweroff_timer,
     set_sleeptimer_duration, /*stub*/
     get_sleep_timer, /*stub*/
-#if (CONFIG_PLATFORM & PLATFORM_NATIVE)
+#if (CONFIG_PLATFORM & PLATFORM_NATIVE) || defined(SONY_PSP)
 #if defined(CPU_COLDFIRE)
     system_memory_guard,
 #endif
@@ -889,9 +889,13 @@ static const struct plugin_api rockbox_api = {
 #ifdef HAVE_HW_H264
     &target_hw_h264_api,
 #endif
+#ifdef HAVE_JPEG
+    clip_jpeg_fd,
+#endif
 
     /* new stuff at the end, sort into place next time
        the API gets incompatible */
+    settings_apply,
 };
 
 static int plugin_buffer_handle;

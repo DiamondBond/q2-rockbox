@@ -718,26 +718,6 @@ androidcc () {
             fi
             GCCOPTS="$GCCOPTS -fomit-frame-pointer -fuse-ld=bfd"  # what default cpu arch/tune to use?
             ;;
-        mips)
-            endian="little"
-            gcctarget="mipsel-linux-android-"
-            echo "${make_toolchain} --toolchain=mipsel-linux-android-${gccchoice} --platform=android-$ANDROID_PLATFORM_VERSION --install-dir=${pwd}/android-toolchain"
-            ${make_toolchain} --toolchain=mipsel-linux-android-${gccchoice} --platform=android-$ANDROID_PLATFORM_VERSION --install-dir=${pwd}/android-toolchain
-            if [ ${?} != 0 ]; then
-                exit
-            fi
-            GCCOPTS="$GCCOPTS -march=mips32 -mtune=r4600 -mno-mips16 -mno-long-calls -fomit-frame-pointer -fPIC"
-            ;;
-        x86)
-            endian="little"
-            gcctarget="i686-linux-android-"
-            echo "${make_toolchain} --toolchain=x86-${gccchoice} --platform=android-android-$ANDROID_PLATFORM_VERSION --install-dir=${pwd}/android-toolchain"
-            ${make_toolchain} --toolchain=x86-${gccchoice} --platform=android-$ANDROID_PLATFORM_VERSION --install-dir=${pwd}/android-toolchain
-            if [ ${?} != 0 ]; then
-                exit
-            fi
-            GCCOPTS="$GCCOPTS -Wa,--noexecstack -ffunction-sections -fomit-frame-pointer"
-            ;;
         *)
             echo "ERROR: androidcc(): Unknown target architecture"
             exit
@@ -1000,6 +980,56 @@ devkitarmcc () {
 
     extradefines="-D__3DS__"
     rbdir="/3ds/.rockbox"
+}
+
+pspsdkcc () {
+    if [ -z "$PSPDEV" ]; then
+        echo "ERROR: You need the PSPDEV SDK installed and have the PSPDEV environment"
+        echo "variable point to the root of the SDK installation."
+        echo "More info at https://pspdev.github.io/"
+        exit
+    fi
+
+    # since no mips asm is required in the PSP port, set architecture to none
+    arch="none"
+
+    CC=$PSPDEV/bin/psp-gcc
+    CPP=$PSPDEV/bin/psp-cpp
+    LD=$PSPDEV/bin/psp-ld
+    AR=$PSPDEV/bin/psp-gcc-ar
+    AS=$PSPDEV/bin/psp-as
+    OC=$PSPDEV/bin/psp-objcopy
+    WINDRES=windres
+    DLLTOOL=dlltool
+    DLLWRAP=dllwrap
+    RANLIB=$PSPDEV/bin/psp-ranlib
+
+    GCCOPTS=`echo $CCOPTS | sed -e s/\ -ffreestanding// -e s/\ -nostdlib// -e s/\ -Wstrict-prototypes//`
+
+    if [ "yes" = "$use_debug" ]; then
+        GCCOPTS=`echo $GCCOPTS | sed -e s/\ -Os/\ -Og/`
+    fi
+
+    # use psp-config to set PSPSDK variable at runtime
+    PSPSDK=$(psp-config --pspsdk-path)
+
+    GCCOPTS="$GCCOPTS -fno-builtin -g -Wno-unused-result"
+    GCCOPTS="$GCCOPTS -I$PSPDEV/psp/include -I$PSPSDK/include"
+    GCCOPTS="$GCCOPTS -G0"
+    GCCOPTS="$GCCOPTS -D_GNU_SOURCE=1 -D_REENTRANT"
+
+    SHARED_LDFLAGS="-L$PSPDEV/psp/lib -lpspmodinfo -Wl,-zmax-page-size=128 -nostartfiles"
+    SHARED_CFLAGS=""
+
+    LDOPTS="-L$PSPDEV/psp/lib -L$PSPSDK/lib -lm -lpspaudio -lpspdisplay -lpspgu -lpspge -lpsphprm -lpspctrl -lpsppower -lpspdebug -lpspsystemctrl_user -lpspkubridge"
+    GLOBAL_LDOPTS="$GLOBAL_LDOPTS -specs=$PSPSDK/lib/prxspecs -Wl,-q,-T$PSPSDK/lib/linkfile.prx -Wl,-zmax-page-size=128"
+
+    # PSPDEV already defines getcwd
+    GLOBAL_LDOPTS="$GLOBAL_LDOPTS -Wl,-wrap,getcwd"
+
+    ARG_PREFIX=""
+
+    extradefines="-D__PSP__"
 }
 
 
@@ -1756,30 +1786,29 @@ cat <<EOF
                                                  213) MA8C
  ==Sony==                  ==Application==
  219) NWZ-E350 series      200) SDL (Generic)    ==IHIFI==
- 220) NWZ-E370/E380 series 201) Andorid (ARM)    230) 760
- 221) NWZ-E360 series      202) Android (MIPS)   231) 770
- 222) NWZ-E450 series      203) Android (x86)    232) 770C
- 223) NWZ-E460 series      209) Anbernic RG Nano 233) 800
- 224) NWZ-E470 series                            234) 960
- 225) NWZ-E580 series      ==AgpTek==
- 226) NWZ-A10 series       239) Rocker native    ==AIGO==
- 227) NW-A20 series        240) Rocker (hosted)  245) Eros Q / K (hosted)
- 228) NWZ-A860 series      ==iBasso==            247) Eros Q / K native
- 229) NWZ-S750 series      250) DX50                  (hw1/hw2 bl, all hw rb)
-                           251) DX90             248) Eros Q / K native
- ==FiiO==                                             (hw3 bl only)
- 244) M3K Linux            ==xDuoo==             249) Eros Q / K native
- 246) M3K baremetal        241) X3                    (hw4 bl only)
-                           242) X3II
- ==Shanling==              243) X20              ==HiBy==
- 260) Q1                                         300) R3 Pro II
+ 220) NWZ-E370/E380 series 201) Android (ARM)    230) 760
+ 221) NWZ-E360 series      209) Anbernic RG Nano 231) 770
+ 222) NWZ-E450 series                            232) 770C
+ 223) NWZ-E460 series      ==AGPTek==            233) 800
+ 224) NWZ-E470 series      239) Rocker (native)  234) 960
+ 225) NWZ-E580 series      240) Rocker (hosted)
+ 226) NWZ-A10 series                             ==AIGO==
+ 227) NW-A20 series        ==iBasso==            245) Eros Q / K (hosted)
+ 228) NWZ-A860 series      250) DX50             247) Eros Q / K native
+ 229) NWZ-S750 series      251) DX90                  (hw1/hw2 bl, all hw rb)
+ 303) PSP (WIP)                                  248) Eros Q / K native
+                           ==xDuoo==                  (hw3 bl only)
+                           241) X3               249) Eros Q / K native
+ ==FiiO==                  242) X3II                  (hw4 bl only)
+ 244) M3K Linux            243) X20
+ 246) M3K baremetal                              ==HiBy==
+                           ==Surfans==           300) R3 Pro II
+ ==Shanling==              280) F28 (WIP)        301) R1
+ 260) Q1
  261) Q2 (hosted)
-			   ==Surfans==           301) R1
- ==Echo project==          280) F28 (WIP)
- 270) Echo R1 (WIP)                              ==Hidizs==
-						 302) AP80 Pro Max (WIP)
- ==Nintendo==
- 290) Nintendo 3DS (WIP)
+                           ==Nintendo==          ==Hidizs==
+ ==Echo project==          290) 3DS (WIP)        302) AP80 Pro Max (WIP)
+ 270) Echo R1 (WIP)
 
 EOF
 
@@ -3306,60 +3335,6 @@ fi
     t_model="ypr0"
     ;;
 
-   202|androidmips)
-    application="yes"
-    target_id=74
-    modelname="androidmips"
-    target="ANDROID"
-    app_type="android"
-    app_set_lcd_size
-    sharedir="/data/data/org.rockbox/app_rockbox/rockbox"
-    bindir="/data/data/org.rockbox/lib"
-    libdir="/data/data/org.rockbox/app_rockbox"
-    memory=8
-    uname=`uname`
-    androidcc 19 mips
-    tool="cp "
-    boottool="cp "
-    bmp2rb_mono="$rootdir/tools/bmp2rb -f 0"
-    bmp2rb_native="$rootdir/tools/bmp2rb -f 4"
-    output="librockbox.so"
-    bootoutput="librockbox.so"
-    appextra="radio:hosted/android"
-    plugins="yes"
-    # architecture, manufacturer and model for the target-tree build
-    t_cpu="hosted"
-    t_manufacturer="android"
-    t_model="app"
-    ;;
-
-   203|androidx86)
-    application="yes"
-    target_id=74
-    modelname="androidx86"
-    target="ANDROID"
-    app_type="android"
-    app_set_lcd_size
-    sharedir="/data/data/org.rockbox/app_rockbox/rockbox"
-    bindir="/data/data/org.rockbox/lib"
-    libdir="/data/data/org.rockbox/app_rockbox"
-    memory=8
-    uname=`uname`
-    androidcc 19 x86
-    tool="cp "
-    boottool="cp "
-    bmp2rb_mono="$rootdir/tools/bmp2rb -f 0"
-    bmp2rb_native="$rootdir/tools/bmp2rb -f 4"
-    output="librockbox.so"
-    bootoutput="librockbox.so"
-    appextra="radio:hosted/android"
-    plugins="yes"
-    # architecture, manufacturer and model for the target-tree build
-    t_cpu="hosted"
-    t_manufacturer="android"
-    t_model="app"
-    ;;
-
    145|samsungypr1)
     application="yes"
     target_id=93
@@ -4363,6 +4338,28 @@ fi
     sysfont="20-Terminus"
     ;;
 
+    303|psp)
+    target_id=127
+    application="yes"
+    modelname="psp"
+    app_type="psp-homebrew"
+    target="SONY_PSP"
+    memory=8
+    uname=`uname`
+    pspsdkcc
+    tool="cp "
+    boottool="cp "
+    bmp2rb_mono="$rootdir/tools/bmp2rb -f 0"
+    bmp2rb_native="$rootdir/tools/bmp2rb -f 10"
+    output="rockbox"
+    bootoutput="EBOOT.PBP"
+    appextra="recorder:gui"
+    plugins="yes"
+    t_cpu="hosted"
+    t_manufacturer="game_console"
+    t_model="psp"
+    ;;
+
 
    *)
     echo "Please select a supported target platform!"
@@ -4487,7 +4484,6 @@ fi
       toolset='';
       GCCOPTS='';
       LDOPTS='';
-      rbdir='.'
       extradefines="$extradefines  -DDEBUG"
       appsdir='$(ROOTDIR)/tools/checkwps';
       output='checkwps.'${modelname};

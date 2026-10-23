@@ -41,7 +41,7 @@
 #if !defined(APPLICATION) || defined(SAMSUNG_YPR0) || defined(SAMSUNG_YPR1) || \
     defined(DX50) || defined(DX90) || defined(SONY_NWZ_LINUX) || \
     defined(HIBY_LINUX) || defined(FIIO_M3K_LINUX) || defined(N3DS) || \
-    defined(SHANLING_Q2)
+    defined(SONY_PSP) || defined(SHANLING_Q2)
 
 #define HOME_DIR "/"
 
@@ -89,7 +89,7 @@
         !(defined(SAMSUNG_YPR0) || defined(SAMSUNG_YPR1) || \
           defined(DX50) || defined(DX90) || defined(SONY_NWZ_LINUX) || \
           defined(HIBY_LINUX) || defined(FIIO_M3K_LINUX) || defined(N3DS) || \
-          defined(SHANLING_Q2))
+          defined(SONY_PSP) || defined(SHANLING_Q2))
 
 #define PLUGIN_DATA_DIR          ROCKBOX_DIR "/rocks.data"
 #define PLUGIN_GAMES_DATA_DIR    PLUGIN_DATA_DIR

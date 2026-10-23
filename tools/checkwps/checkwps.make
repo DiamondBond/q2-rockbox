@@ -43,7 +43,7 @@ $(BUILDDIR)/$(BINARY): $$(CHECKWPS_OBJ) $$(CORE_LIBS)
 $(BUILDDIR)/fontbundle.h: $(ROOTDIR)/fonts/*bdf
 	@echo FONTBUNDLE
 	$(SILENT)echo "static const unsigned char* bundledfonts[] = {" > $@
-	$(SILENT)ls $(ROOTDIR)/fonts/*bdf | perl -pne 's|.*/(\d+-.*)\.bdf|  "$$1",|;' >> $@
+	$(SILENT)ls $(ROOTDIR)/fonts/*bdf | perl -pne 's|.*/(\d+-.*)\.bdf|  "$$1.fnt",|;' >> $@
 	$(SILENT)echo "  NULL, " >> $@
 	$(SILENT)echo "};" >> $@
 
@@ -53,12 +53,24 @@ $(BUILDDIR)/themeassets.h: $(ROOTDIR)/wps/WPSLIST
 	$(SILENT)mkdir $(BUILDDIR)/.rockbox
 	$(SILENT)echo "static const unsigned char* themeassets[] = {" > $@
 	$(SILENT)$(ROOTDIR)/wps/wpsbuild.pl $(ROOTDIR)/wps/WPSLIST $(TARGET) > /dev/null 2>&1
-	$(SILENT)find $(BUILDDIR)/.rockbox -type f | perl -pne 's|.*/(\S+)\.\S+|  "$$1",|;' >> $@
+	$(SILENT)find $(BUILDDIR)/.rockbox -type f | perl -pne 's|.*/(\S+)\.(\S+)|  "$$1.$$2",|;' >> $@
 	$(SILENT)echo "  NULL, " >> $@
 	$(SILENT)echo "};" >> $@
 	$(SILENT)rm -Rf $(BUILDDIR)/.rockbox
 
-#### Everything below is hacked in from apps.make and lang.make
+#### Everything below is hacked in from firmware.make, apps.make and lang.make
+
+SVNVERSION:=$(shell VERSION='$(VERSION)' $(TOOLSDIR)/version.sh $(ROOTDIR))
+OLDSVNVERSION:=$(shell grep 'RBVERSION' $(BUILDDIR)/rbversion.h 2>/dev/null|cut -d '"' -f 2 || echo "NOREVISION")
+
+CORE_LIBS:=$(FIRMLIB)
+
+ifneq ($(SVNVERSION),$(OLDSVNVERSION))
+.PHONY: $(BUILDDIR)/rbversion.h
+endif
+
+$(BUILDDIR)/rbversion.h:
+	$(call PRINTS,GEN $(@F))$(TOOLSDIR)/genversion.sh $(BUILDDIR) $(SVNVERSION)
 
 $(BUILDDIR)/apps/features: $(ROOTDIR)/apps/features.txt
 	$(SILENT)mkdir -p $(BUILDDIR)/apps

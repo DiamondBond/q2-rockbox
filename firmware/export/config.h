@@ -81,8 +81,10 @@
 #define IMX233        233
 #define RK27XX       2700
 #define X1000        1000
+#define X1600        1600
 #define STM32H743   32743
 #define N10480H     10480
+#define TACHYON     4000
 
 /* platforms
  * bit fields to allow PLATFORM_HOSTED to be OR'ed e.g. with a
@@ -158,6 +160,7 @@
 #define N3DS_PAD           78
 #define HIBY_R3PROII_PAD   79
 #define HIDIZS_AP80MAX_PAD 80
+#define PSP_PAD            81
 
 /* CONFIG_REMOTE_KEYPAD */
 #define H100_REMOTE   1
@@ -358,6 +361,7 @@ Lyre prototype 1 */
 #define RTC_NANO3G   25 /* Dialog Semiconductor D1671 ??? */
 #define RTC_NANO4G   26 /* Dialog Semiconductor D1759 ??? */
 #define RTC_STM32H743 27
+#define RTC_X1600    28 /* Ingenic X1600 */
 
 /* USB On-the-go */
 #define USBOTG_M66591   6591 /* M:Robe 500 */
@@ -596,6 +600,8 @@ Lyre prototype 1 */
 #include "config/hibyr1.h"
 #elif defined(HIDIZS_AP80MAX)
 #include "config/hidizsap80max.h"
+#elif defined(SONY_PSP)
+#include "config/sonypsp.h"
 #else
 #error "unknown hardware platform!"
 #endif
@@ -1039,11 +1045,12 @@ Lyre prototype 1 */
 #if defined(ASSEMBLER_THREADS) \
     || defined(HAVE_WIN32_FIBER_THREADS) \
     || defined(HAVE_SIGALTSTACK_THREADS) \
-    || defined(N3DS)
+    || defined(N3DS) \
+    || defined(SONY_PSP)
 #define HAVE_PRIORITY_SCHEDULING
 #endif
 
-#if (CONFIG_PLATFORM & PLATFORM_NATIVE)
+#if (CONFIG_PLATFORM & PLATFORM_NATIVE) || defined(SONY_PSP)
 #define HAVE_PRIORITY_SCHEDULING
 #define HAVE_SCHEDULER_BOOSTCTRL
 #endif /* PLATFORM_NATIVE */
@@ -1321,10 +1328,10 @@ Lyre prototype 1 */
 
 #endif /* NUM_CORES */
 
-#ifdef HAVE_HEADPHONE_DETECTION
-/* Timeout objects required if headphone detection is enabled */
+#if defined(HAVE_HEADPHONE_DETECTION) || defined(HAVE_LINEOUT_DETECTION)
+/* Timeout objects required if headphone or line out detection is enabled */
 #define INCLUDE_TIMEOUT_API
-#endif /* HAVE_HEADPHONE_DETECTION */
+#endif /* HAVE_HEADPHONE_DETECTION || HAVE_LINEOUT_DETECTION */
 
 #ifdef HAVE_TOUCHSCREEN
 /* Timeout objects required for kinetic list scrolling */
