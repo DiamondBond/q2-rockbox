@@ -64,6 +64,34 @@ void interrupt(void)
     pthread_cond_signal(&wfi_cond);
 }
 
+#ifdef SHANLING_Q2
+/*
+ * SIGEV_THREAD has glibc create a thread for every expiry, so tick from one
+ * thread instead. The deadline is absolute: after a late wakeup the owed ticks
+ * run in sequence */
+static void *tick_thread(void *arg)
+{
+    long interval_ns = (long)arg;
+    struct timespec next;
+
+    clock_gettime(CLOCK_MONOTONIC, &next);
+    while (1)
+    {
+        next.tv_nsec += interval_ns;
+        if (next.tv_nsec >= 1000000000)
+        {
+            next.tv_nsec -= 1000000000;
+            next.tv_sec++;
+        }
+        while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL)
+               == EINTR);
+        call_tick_tasks();
+        interrupt();
+    }
+    return NULL;
+}
+#endif
+
 /*
  * setup a hrtimer to send a signal to our process every tick
  *
@@ -77,6 +105,22 @@ void interrupt(void)
 void tick_start(unsigned int interval_in_ms)
 {
     int ret = 0;
+#ifdef SHANLING_Q2
+    pthread_t thread;
+    sigset_t all, old;
+
+    /* signals blocked: SIGIO keeps going to the main thread. Not the synchronous
+     * faults: blocking those would skip sig_handler's panic screen */
+    sigfillset(&all);
+    sigdelset(&all, SIGSEGV);
+    sigdelset(&all, SIGBUS);
+    sigdelset(&all, SIGILL);
+    sigdelset(&all, SIGFPE);
+    pthread_sigmask(SIG_BLOCK, &all, &old);
+    errno = ret = pthread_create(&thread, NULL, tick_thread,
+                                 (void *)(long)(interval_in_ms*1000*1000));
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+#else
     timer_t timerid;
     struct itimerspec ts;
     sigevent_t sigev;
@@ -92,6 +136,7 @@ void tick_start(unsigned int interval_in_ms)
     /* add the timer */
     ret |= timer_create(CLOCK_REALTIME, &sigev, &timerid);
     ret |= timer_settime(timerid, 0, &ts, NULL);
+#endif
 
     /* Grab the mutex already now and leave it to this thread. We don't
      * care about race conditions when signaling the condition (because
