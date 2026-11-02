@@ -60,10 +60,16 @@ bool charging_state(void)
 int _battery_level(void)
 {
     static int last_level = -1;
+    static long last_tick;
     int level;
-    if (sysfs_get_int("/sys/devices/i2c-0/0-0062/cw2015_capacity", &level) &&
-        level >= 0 && level <= 100)
-        last_level = level;
+    /* powermgmt asks twice a second; the gauge moves far slower */
+    if (last_level < 0 ||
+        (unsigned long)current_tick - (unsigned long)last_tick >= 10 * HZ) {
+        last_tick = current_tick;
+        if (sysfs_get_int("/sys/devices/i2c-0/0-0062/cw2015_capacity", &level) &&
+            level >= 0 && level <= 100)
+            last_level = level;
+    }
     return last_level;
 }
 
@@ -87,9 +93,17 @@ static int gpio(void)
 }
 
 /* the 3.5 mm (PA07) and 4.4 mm (PA08) jacks, active low: stock's
- * check_headset_status takes gpio_get_value() == 0 as plugged */
+ * check_headset_status takes gpio_get_value() == 0 as plugged. button.c asks
+ * every tick and debounces for HZ/2, so read them each HZ/4; tick 0 is not
+ * before next_read's initial 0, so the first call always reads. */
 bool headphones_inserted(void)
 {
-    return gpio() >= 0 && (ioctl(gpio(), GPIO_GET_VALUE, "PA07") == 0 ||
-                           ioctl(gpio(), GPIO_GET_VALUE, "PA08") == 0);
+    static bool inserted;
+    static long next_read;
+    if (!TIME_BEFORE(current_tick, next_read)) {
+        inserted = gpio() >= 0 && (ioctl(gpio(), GPIO_GET_VALUE, "PA07") == 0 ||
+                                   ioctl(gpio(), GPIO_GET_VALUE, "PA08") == 0);
+        next_read = current_tick + HZ / 4;
+    }
+    return inserted;
 }

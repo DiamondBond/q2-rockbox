@@ -86,25 +86,68 @@ int main(void) {
 #include <stdbool.h>
 #include <string.h>
 #include <limits.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #define HZ 100
 #define POWER_INPUT_USB_CHARGER 1
 #define POWER_INPUT_NONE 0
+#define TIME_AFTER(a,b) ((long)(b) - (long)(a) < 0)
+#define TIME_BEFORE(a,b) TIME_AFTER(b,a)
 static long current_tick;
-static unsigned reads;
+static unsigned reads, gauge_reads, jack_reads;
 static bool read_ok = true;
 static const char *status = "Charging";
 static int capacity = 75;
+static const char *jack = "";
+static int mock_open(const char *p, int flags) { (void)p; (void)flags; return 7; }
+static int mock_ioctl(int fd, unsigned long request, const char *pin);
+#define open mock_open
+#define ioctl mock_ioctl
 #include "firmware/target/hosted/shanling/power-q2.c"
+static int mock_ioctl(int fd, unsigned long request, const char *pin) {
+    assert(fd == 7 && request == GPIO_GET_VALUE);
+    jack_reads++;
+    return strcmp(pin, jack) != 0; /* active low */
+}
 bool sysfs_get_string(const char *p, char *out, int n) {
     (void)p; reads++; strncpy(out, status, n); return read_ok;
 }
-bool sysfs_get_int(const char *p, int *v) { (void)p; *v = capacity; return read_ok; }
+bool sysfs_get_int(const char *p, int *v) {
+    (void)p; gauge_reads++; *v = capacity; return read_ok;
+}
 int main(void) {
+    /* The jacks: the first call reads, at tick 0 too, then once per HZ/4. */
+    jack = "PA08"; assert(headphones_inserted() && jack_reads == 2);
+    jack = "";
+    for (; current_tick < HZ / 4; current_tick++) assert(headphones_inserted());
+    assert(jack_reads == 2);
+    assert(!headphones_inserted() && jack_reads == 4);
+    jack = "PA07"; current_tick += HZ / 4 - 1;
+    assert(!headphones_inserted() && jack_reads == 4);
+    current_tick++; assert(headphones_inserted() && jack_reads == 5);
+    jack = ""; current_tick = LONG_MAX - 5; assert(!headphones_inserted());
+    jack = "PA07"; current_tick = LONG_MAX; assert(!headphones_inserted());
+    current_tick = LONG_MIN + HZ / 4 - 7; assert(!headphones_inserted());
+    current_tick++; assert(headphones_inserted());
+    /* The gauge: each call tries until a valid reading, then once per 10 s,
+     * keeping the last valid one through errors. */
+    current_tick = 0;
     read_ok = false; assert(_battery_level() == -1);
-    read_ok = true; assert(_battery_level() == 75);
-    read_ok = false; capacity = -1; assert(_battery_level() == 75);
-    read_ok = true; capacity = 101; assert(_battery_level() == 75);
-    capacity = 0; assert(_battery_level() == 0);
+    read_ok = true; capacity = 101; assert(_battery_level() == -1 && gauge_reads == 2);
+    capacity = 75; assert(_battery_level() == 75 && gauge_reads == 3);
+    capacity = 50;
+    for (; current_tick < 10 * HZ; current_tick++) assert(_battery_level() == 75);
+    assert(gauge_reads == 3);
+    read_ok = false; capacity = -1; assert(_battery_level() == 75 && gauge_reads == 4);
+    assert(_battery_level() == 75 && gauge_reads == 4);
+    current_tick += 10 * HZ; read_ok = true; capacity = 101;
+    assert(_battery_level() == 75 && gauge_reads == 5);
+    current_tick += 10 * HZ; capacity = 0; assert(_battery_level() == 0 && gauge_reads == 6);
+    current_tick = LONG_MAX - HZ; capacity = 20; assert(_battery_level() == 20);
+    capacity = 30; current_tick = LONG_MAX; assert(_battery_level() == 20);
+    current_tick = LONG_MIN + 9 * HZ - 2; assert(_battery_level() == 20);
+    current_tick++; assert(_battery_level() == 30);
+    current_tick = 0;
     assert(charging_state() && power_input_status() == POWER_INPUT_USB_CHARGER);
     assert(reads == 1); /* startup samples immediately; callers share the result */
     for (current_tick = 1; current_tick < HZ; current_tick++) charging_state();
@@ -127,8 +170,9 @@ int main(void) {
     for name, source in (('display', display), ('power', power)):
         src, exe = tmp / (name + '.c'), tmp / name
         src.write_text(source)
+        # -fno-strict-overflow as the firmware: TIME_AFTER relies on it at wrap
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-fsanitize=undefined',
-                        '-I', str(tmp), '-I', str(root), '-I',
+                        '-fno-strict-overflow', '-I', str(tmp), '-I', str(root), '-I',
                         str(root / 'firmware/target/hosted'), str(src), '-o', str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
-print('Q2 rotation/pages/pan failure/clipping/wake, battery errors/charger cache/full: OK')
+print('Q2 rotation/pages/pan failure/clipping/wake, battery errors/charger, jack and gauge caches/full: OK')

@@ -34,6 +34,7 @@
 #include "backlight.h"
 #include "kernel.h"
 #include "powermgmt.h"
+#include "shanlingq2_codec.h"
 #include "wheel-q2.h"
 
 enum { KEYS, WHEEL, AVRCP, NDEV };
@@ -132,9 +133,17 @@ int button_read_device(void)
     struct input_event e;
     int ticks = 0;
 
-    if (fds[AVRCP].fd < 0 && TIME_AFTER(current_tick, rescan)) {
+    /* The keys and wheel only go if closed below. A headset is looked for while
+     * it is the output, or while the Bluetooth stack is up, so one connected
+     * with the wires in and then unplugged, or that drops and reconnects after
+     * the fallback to the DAC, keeps its buttons. A cold boot has no hci0: one
+     * access() a second, not every input node reopened. */
+    if (TIME_AFTER(current_tick, rescan)) {
         rescan = current_tick + HZ;
-        open_devices();
+        if (fds[KEYS].fd < 0 || fds[WHEEL].fd < 0 ||
+            (fds[AVRCP].fd < 0 && (shanlingq2_bt_output() ||
+                                   access("/sys/class/bluetooth/hci0", F_OK) == 0)))
+            open_devices();
     }
 
     while (poll(fds, NDEV, 0) > 0) {

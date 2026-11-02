@@ -244,7 +244,7 @@ int main(int argc, char **argv) {
                     str(root / 'firmware/target/hosted'), str(src),
                     str(root / 'firmware/target/hosted/sysfs.c'), '-o', str(exe)], check=True)
     subprocess.run([str(exe), str(tmp / 'value')], check=True)
-    for name in ('button.h', 'backlight.h', 'kernel.h', 'powermgmt.h'):
+    for name in ('button.h', 'backlight.h', 'kernel.h', 'powermgmt.h', 'shanlingq2_codec.h'):
         (tmp / name).write_text('')
     src.write_text(r'''
 #include <assert.h>
@@ -275,6 +275,7 @@ static void backlight_on(void) {}
 static void reset_poweroff_timer(void) {}
 static void button_queue_post(int button, int data) { (void)button; (void)data; }
 static void q2_key_tone_init(void) {}
+static bool shanlingq2_bt_output(void) { return false; }
 #include "firmware/target/hosted/shanling/button-q2.c"
 static int mode, polled, closed;
 int mock_poll(struct pollfd *p, nfds_t n, int timeout) {
