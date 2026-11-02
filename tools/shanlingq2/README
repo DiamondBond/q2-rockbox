@@ -92,7 +92,9 @@ buzzer_init: "cmd_mcu write_firmware /usr/data/libmcu-bare.bin", "cmd_mcu
 bootup", "cmd_mcu reset". The MCU (/dev/mcu) only drives the key-tone buzzer
 ("cmd_mcu write_str buzzer"); Rockbox runs this only while Q2 Pod's Key Tone
 is on (keytone-q2.c: SYSSET KEYTONE, IPOD KEYTONEHP in /mnt/data/config.ini,
-read at startup). Jack detect: GPIO PA07
+read at startup), and with it off holds the MCU in reset ("cmd_mcu shutdown"),
+as demo's buzzer_init leaves it running whatever Key Tone says; soc_mcu.ko's
+mcu_shutdown only sets DMCS bit 0, which mcu_bootup clears. Jack detect: GPIO PA07
 (3.5 mm), PA08 (4.4 mm), active low: check_headset_status stores
 gpio_get_value() == 0 as plugged. libhardware2's gpio_get_value returns
 ioctl(/dev/gpio, 0x2000477a, "PA07") unchanged.

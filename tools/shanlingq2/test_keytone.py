@@ -58,9 +58,10 @@ int main(int argc, char **argv)
     bt = argv[3][0] == '1';
     int clicks = atoi(argv[4]);
     q2_key_tone_init();
-    if (clicks < 0) { /* Key Tone off: no thread, no MCU, no click */
+    if (clicks < 0) { /* Key Tone off: the MCU held in reset, no thread, no click */
         q2_key_tone();
-        assert(!q2_key_tone_on && !spawns);
+        assert(!q2_key_tone_on && spawns == 1 && !strcmp(calls, "shutdown;"));
+        assert(!tone_click[0] && !tone_click[1]); /* no pipe: the worker never started */
         return 0;
     }
     assert(q2_key_tone_on);

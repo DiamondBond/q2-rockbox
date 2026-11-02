@@ -79,14 +79,22 @@ void q2_key_tone_init(void)
     with_headphones = !strcmp(q2pod_value(config, "KEYTONEHP", line, sizeof line), "1");
     if (config)
         fclose(config);
-    if (!q2_key_tone_on || pipe2(tone_click, O_CLOEXEC))
+    posix_spawn_file_actions_init(&quiet);
+    posix_spawn_file_actions_addopen(&quiet, 1, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_adddup2(&quiet, 1, 2);
+    if (!q2_key_tone_on) {
+        /* From Q2 Pod's Home the MCU is up, as demo's buzzer_init starts it
+         * whatever Key Tone says, polling for a click that won't come. This holds
+         * it in reset: one register bit in the driver, already set at power-on,
+         * and demo's buzzer_init releases it when it next starts. */
+        cmd_mcu("shutdown", NULL);
+        return;
+    }
+    if (pipe2(tone_click, O_CLOEXEC))
         return;
 
     sigset_t all, old;
     pthread_t worker;
-    posix_spawn_file_actions_init(&quiet);
-    posix_spawn_file_actions_addopen(&quiet, 1, "/dev/null", O_WRONLY, 0);
-    posix_spawn_file_actions_adddup2(&quiet, 1, 2);
     sigfillset(&all);
     pthread_sigmask(SIG_BLOCK, &all, &old);
     /* if it fails, tone_busy stays set and the Q2 stays silent */
