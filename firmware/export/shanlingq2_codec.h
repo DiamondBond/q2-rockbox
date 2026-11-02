@@ -16,5 +16,8 @@ AUDIOHW_SETTING(FILTER_ROLL_OFF, "", 0, 1, 0, 3, 3)
 void audiohw_mute(int mute);
 /* a Bluetooth headset is the output, not the DAC */
 bool shanlingq2_bt_output(void);
+/* pcm-alsa: playback is about to start, or has stopped (maybe in SIGIO) */
+void shanlingq2_dac_wake(void);
+void shanlingq2_dac_idle(void);
 
 #endif

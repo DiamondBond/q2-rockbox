@@ -131,6 +131,8 @@ an int pointer:
   0xc0044d1b  PCM mode, 0 (hciplayer, per PCM track)
   0xc0044d1f  mute, 1 mute / 0 unmute (hciplayer: set on pause and close)
   0xc0044d04  mclSetPcmMode; unused so far
+Powered off 30 s after pcm-alsa stops or starts up (stock's check_dacoff_state)
+and on again before the next audio, a stall of about 0.6 s (shanlingq2_codec.c).
 
 Keys: /dev/input/event1 (keyboard_gpio_add.ko, module_driver/*.sh):
   evdev code               GPIO  button

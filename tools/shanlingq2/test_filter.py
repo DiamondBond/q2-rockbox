@@ -14,6 +14,12 @@ with tempfile.TemporaryDirectory() as tmp:
 void audiohw_mute(int);
 """)
     (tmp / "button.h").write_text("bool headphones_inserted(void);\n")
+    (tmp / "kernel.h").write_text("""
+#define HZ 100
+#define TIME_BEFORE(a, b) ((long)(a) - (long)(b) < 0)
+extern volatile long current_tick;
+int tick_add_task(void (*)(void));
+""")
     (tmp / "pcm-alsa.h").write_text("""
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
@@ -27,6 +33,8 @@ void pcm_set_mixer_volume(int, int);
 #define ioctl mock_ioctl
 #include "firmware/target/hosted/shanling/shanlingq2_codec.c"
 
+volatile long current_tick;
+int tick_add_task(void (*task)(void)) { (void)task; return 0; }
 static int bluetooth, phones, last_filter = -1, writes;
 int mock_open(const char *path, int flags, ...)
 {

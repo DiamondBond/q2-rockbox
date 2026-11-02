@@ -868,10 +868,16 @@ static void sink_dma_stop(void)
 #ifdef AUDIOHW_MUTE_ON_STOP
     audiohw_mute(true);
 #endif
+#ifdef HAVE_SHANLINGQ2_CODEC
+    shanlingq2_dac_idle();
+#endif
 }
 
 static void sink_dma_start(const void *addr, size_t size)
 {
+#ifdef HAVE_SHANLINGQ2_CODEC
+    shanlingq2_dac_wake();
+#endif
     logf("PCM DMA start (%p %d)", addr, size);
 
     pcm_data = addr;
