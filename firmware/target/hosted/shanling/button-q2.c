@@ -39,6 +39,7 @@
 enum { KEYS, WHEEL, AVRCP, NDEV };
 static const char *const names[NDEV] = { "md-gpio-keys", "hyn_sliderbar", "(AVRCP)" };
 static struct pollfd fds[NDEV];
+static int wheel_step;
 
 static bool is_device(int d, const char *name)
 {
@@ -71,6 +72,11 @@ void button_init_device(void)
     for (int d = 0; d < NDEV; d++)
         fds[d].fd = -1;
     open_devices();
+
+    FILE *config = fopen("/mnt/data/config.ini", "re");
+    wheel_step = wheel_read_step(config);
+    if (config)
+        fclose(config);
 
     /* Return held at boot: back to the launcher, which starts the stock
      * player (exit 0x51), so the stock OS stays reachable whatever Rockbox does */
@@ -120,7 +126,7 @@ static int headset_button(int code)
 int button_read_device(void)
 {
     static int buttons;
-    static int anchor = -1; /* wheel position of the last tick; -1: no finger */
+    static int anchor = -1; /* wheel position of the last tick, in WHEEL_FINE; -1: no finger */
     static long rescan;
     struct input_event e;
     int ticks = 0;
@@ -154,9 +160,9 @@ int button_read_device(void)
                 if (e.code == ABS_PRESSURE && !e.value)
                     anchor = -1;
                 else if (e.code == ABS_X && anchor < 0)
-                    anchor = e.value;
+                    anchor = e.value * WHEEL_FINE;
                 else if (e.code == ABS_X)
-                    ticks += wheel_ticks(&anchor, e.value);
+                    ticks += wheel_ticks(&anchor, e.value, wheel_step);
             }
         }
     }

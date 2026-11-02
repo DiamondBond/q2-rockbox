@@ -147,7 +147,9 @@ encoderknob_thread_run (0x6256a0) wraps each delta into -100..100
 (get_direction 0x62587c) and ticks past 20 for a gesture's first step and 10
 after. event2 "hyn_ts" is the touchscreen (ABS_X 0..319, ABS_Y 0..374,
 ABS_PRESSURE; hyn_touch.ko), event0 "axp2101-pek" the PMIC's KEY_POWER (sent
-nothing in the probe run).
+nothing in the probe run). Rockbox's step follows Q2 Pod's Wheel Sensitivity
+(WHEELSENSITIVITY in /mnt/data/config.ini, read at startup; 28 units a tick at
+its default 50%, wheel-q2.h), so both systems take the same ticks a turn.
 
 Power off: into_poweroff stops playback, DAC power 0, GPIO PC20 = 0 and PE22 =
 0, stops Wi-Fi and Bluetooth; device_poweroff blanks the screen and runs
