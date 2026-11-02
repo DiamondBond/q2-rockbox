@@ -100,7 +100,8 @@
  || defined(ONDA_VX747)  \
  || defined(ONDA_VX767)  \
  || defined(ONDA_VX747P) \
- || defined(ONDA_VX777)
+ || defined(ONDA_VX777) \
+ || defined(HIBY_R1_NATIVE)
 #define DEFAULT_TOUCHSCREEN_MODE TOUCHSCREEN_POINT
 #else
 #define DEFAULT_TOUCHSCREEN_MODE TOUCHSCREEN_BUTTON
@@ -2250,10 +2251,10 @@ const struct settings_list settings[] = {
 #endif
 #endif /* CONFIG_TUNER */
 #ifdef HAVE_RECORDING
-    TEXT_SETTING(F_THEMESETTING|F_NEEDAPPLY, wrs_file, "wrs",
+    TEXT_SETTING(F_THEMESETTING|F_THEMERESET|F_NEEDAPPLY, wrs_file, "wrs",
                      DEFAULT_WRS_NAME, WPS_DIR "/", ".wrs"),
 #ifdef HAVE_REMOTE_LCD
-    TEXT_SETTING(F_THEMESETTING|F_NEEDAPPLY, rwrs_file, "rwrs",
+    TEXT_SETTING(F_THEMESETTING|F_THEMERESET|F_NEEDAPPLY, rwrs_file, "rwrs",
                      DEFAULT_WRS_NAME, WPS_DIR "/", ".rwrs"),
 #endif
 #endif
@@ -2278,7 +2279,7 @@ const struct settings_list settings[] = {
 #endif
     TEXT_SETTING(0,lang_file,"lang","",LANG_DIR "/",".lng"),
 #if LCD_DEPTH > 1
-    TEXT_SETTING(F_THEMESETTING|F_NEEDAPPLY,backdrop_file,"backdrop",
+    TEXT_SETTING(F_THEMESETTING|F_THEMERESET|F_NEEDAPPLY,backdrop_file,"backdrop",
                      DEFAULT_BACKDROP, NULL, NULL),
 #endif
     TEXT_SETTING(0,kbd_file,"kbd","-",ROCKBOX_DIR "/",".kbd"),

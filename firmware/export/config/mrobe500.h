@@ -171,7 +171,7 @@
 #define HAVE_SW_POWEROFF
 
 /* The number of bytes reserved for loadable codecs */
-#define CODEC_SIZE 0x100000
+#define CODEC_SIZE 0x80000
 
 /* The number of bytes reserved for loadable plugins */
 #if LCD_NATIVE_WIDTH < 480
@@ -243,7 +243,6 @@
 
 #define BOOTFILE_EXT "mrobe500"
 #define BOOTFILE "rockbox." BOOTFILE_EXT
-#define BOOTDIR "/.rockbox"
 
 #define IRAM_LCDFRAMEBUFFER IBSS_ATTR /* put the lcd frame buffer in IRAM */
 

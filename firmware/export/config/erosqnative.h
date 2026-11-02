@@ -7,7 +7,6 @@
 #define MODEL_NUMBER 116
 #define BOOTFILE_EXT "erosq"
 #define BOOTFILE     "rockbox." BOOTFILE_EXT
-#define BOOTDIR      "/.rockbox"
 
 /* Define EROSQN_VER as an "extradefine" in the configure script -
  * v1, v2 players: "1"
@@ -104,7 +103,7 @@
 #define HAVE_SW_POWEROFF
 
 #ifndef SIMULATOR
-#define HAVE_AXP2101_ADDON
+#define HAVE_AXP2101
 #define HAVE_AXP_PMU 192
 #define HAVE_POWEROFF_WHILE_CHARGING
 #endif

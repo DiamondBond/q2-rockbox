@@ -11,7 +11,7 @@
 #define HAVE_FPU
 
 /* For Rolo and boot loader */
-#define MODEL_NUMBER 100
+#define MODEL_NUMBER 121
 
 #define MODEL_NAME   "Anbernic RG Nano"
 
@@ -102,8 +102,6 @@
 
 /* Define this if a programmable hotkey is mapped */
 #define HAVE_HOTKEY
-
-#define BOOTDIR "/.rockbox"
 
 /* No special storage */
 #define CONFIG_STORAGE STORAGE_HOSTFS

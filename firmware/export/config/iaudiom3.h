@@ -92,7 +92,7 @@
 #define HAVE_SW_POWEROFF
 
 /* The number of bytes reserved for loadable codecs */
-#define CODEC_SIZE 0x100000
+#define CODEC_SIZE 0x80000
 
 /* The number of bytes reserved for loadable plugins */
 #define PLUGIN_BUFFER_SIZE 0x80000
@@ -149,7 +149,6 @@
 
 #define BOOTFILE_EXT "iaudio"
 #define BOOTFILE "rockbox." BOOTFILE_EXT
-#define BOOTDIR "/.rockbox"
 
 #define BOOTLOADER_ENTRYPOINT  0x001F0000
 #define FLASH_RAMIMAGE_ENTRY   0x00001000

@@ -158,6 +158,7 @@ int main (int argc, char** argv)
         oname = argv[4];
         modelnum = 0;
 
+        /* NOTE:  This MUST match MODEL_NUMBER in configs/target.h */
         if(!strncmp(argv[2], "-modelnum=", 10)) {
             modelnum = atoi(&argv[2][10]);
         }
@@ -176,6 +177,7 @@ int main (int argc, char** argv)
         oname = argv[3];
         method = add;
 
+        /* NOTE:  This MUST match MODEL_NUMBER in configs/target.h */
         if(!strcmp(&argv[1][5], "h120"))
             modelnum = 0;
         else if(!strcmp(&argv[1][5], "h140"))
@@ -340,6 +342,8 @@ int main (int argc, char** argv)
             modelnum = 117;
         else if (!strcmp(&argv[1][5], "nn4g")) /* iPod Nano 4th Gen */
             modelnum = 118;
+        else if (!strcmp(&argv[1][5], "hbr1")) /* HiBy R1 (native) */
+            modelnum = 126;
         else {
             fprintf(stderr, "unsupported model: %s\n", &argv[1][5]);
             return 2;
@@ -835,4 +839,3 @@ static int ccpmp_encode(char *iname, char *oname)
 
     return 0;
 }
-

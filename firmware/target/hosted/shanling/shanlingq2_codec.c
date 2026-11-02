@@ -22,8 +22,8 @@
  * stock demo and hciplayer do (tools/shanlingq2/README). The DAC sits at its
  * 0 dB step and Rockbox's volume is all in pcm-alsa's 32-bit mixer.
  * ponytail: the DAC's own steps (0.5 dB from about -38 dB up, coarser below,
- * per the driver's tables) could take the coarse part, as fiiolinux_codec.c
- * does, if the noise floor at low volume ever matters.
+ * per the driver's tables) could take the coarse part, if the noise floor at
+ * low volume ever matters.
  *
  * Bluetooth: Q2 Pod starts Rockbox from its Home menu with the headset it
  * connected still connected (its daemons outlive the stock player), so a

@@ -96,7 +96,7 @@
 #define ICODE_ATTR_TREMOR_NOT_MDCT
 
 /* The number of bytes reserved for loadable codecs */
-#define CODEC_SIZE 0x100000
+#define CODEC_SIZE 0x80000
 
 /* The number of bytes reserved for loadable plugins */
 #define PLUGIN_BUFFER_SIZE 0x80000
@@ -160,7 +160,6 @@
 
 #define BOOTFILE_EXT "d2"
 #define BOOTFILE "rockbox." BOOTFILE_EXT
-#define BOOTDIR "/.rockbox"
 
 /* Define this if a programmable hotkey is mapped */
 #define HAVE_HOTKEY

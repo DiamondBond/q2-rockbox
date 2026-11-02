@@ -3,7 +3,7 @@
  */
 
 /* For Rolo and boot loader */
-#define MODEL_NUMBER 126
+#define MODEL_NUMBER 134
 
 #define MODEL_NAME   "Shanling Q2"
 

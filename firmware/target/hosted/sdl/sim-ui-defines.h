@@ -495,7 +495,7 @@
 #define UI_LCD_POSX                 45
 #define UI_LCD_POSY                 50
 
-#elif defined(FIIO_M3K) || defined(FIIO_M3K_LINUX)
+#elif defined(FIIO_M3K)
 #define UI_TITLE                    "FiiO M3K"
 #define UI_WIDTH                    334 /* width of GUI window */
 #define UI_HEIGHT                   684 /* height of GUI window */
@@ -532,7 +532,7 @@
 #define UI_LCD_POSX                 79
 #define UI_LCD_POSY                 63
 
-#elif defined(HIBY_R1)
+#elif defined(HIBY_R1) || defined(HIBY_R1_NATIVE)
 #define UI_TITLE                    "Hiby R1"
 #define UI_WIDTH                    634
 #define UI_HEIGHT                   1016

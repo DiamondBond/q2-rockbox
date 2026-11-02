@@ -7,7 +7,6 @@
 #define MODEL_NUMBER 133
 #define BOOTFILE_EXT "rockern"
 #define BOOTFILE     "rockbox." BOOTFILE_EXT
-#define BOOTDIR      "/.rockbox"
 
 /* CPU defines */
 #define CONFIG_CPU      X1000
@@ -94,9 +93,6 @@
 /* Multiboot */
 #define HAVE_BOOTDATA
 #define BOOT_REDIR "rockbox_main.agptek_rockern"
-
-/* DeviceData */
-#define HAVE_DEVICEDATA
 
 /* USB support */
 #ifndef SIMULATOR

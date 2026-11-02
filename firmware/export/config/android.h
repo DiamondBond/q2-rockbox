@@ -55,7 +55,7 @@
 #define CONFIG_RTC RTC_HOSTED
 
 /* The number of bytes reserved for loadable codecs */
-#define CODEC_SIZE 0x100000
+#define CODEC_SIZE 0x80000
 
 /* The number of bytes reserved for loadable plugins */
 #define PLUGIN_BUFFER_SIZE 0x80000
@@ -90,8 +90,6 @@
 
 /* Define this if a programmable hotkey is mapped */
 #define HAVE_HOTKEY
-
-#define BOOTDIR "/.rockbox"
 
 /* No special storage */
 #define CONFIG_STORAGE STORAGE_HOSTFS
