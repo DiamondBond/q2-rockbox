@@ -253,6 +253,7 @@ target/hosted/shanling/lcd-q2.c
 target/hosted/shanling/power-q2.c
 #if !defined(BOOTLOADER)
 target/hosted/pcm-alsa.c
+target/hosted/shanling/keytone-q2.c
 target/hosted/shanling/shanlingq2_codec.c
 #endif
 #endif

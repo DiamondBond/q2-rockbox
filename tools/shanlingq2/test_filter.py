@@ -82,7 +82,7 @@ int main(void)
     /* headphones in a jack: the DAC, though Bluetooth would open */
     bluetooth = phones = 1;
     audiohw_preinit();
-    assert(writes == 8);
+    assert(writes == 8 && !shanlingq2_bt_output());
     audiohw_close();
 }
 ''')

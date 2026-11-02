@@ -14,5 +14,7 @@ AUDIOHW_SETTING(FILTER_ROLL_OFF, "", 0, 1, 0, 3, 3)
 #define AUDIOHW_MUTE_ON_STOP
 
 void audiohw_mute(int mute);
+/* a Bluetooth headset is the output, not the DAC */
+bool shanlingq2_bt_output(void);
 
 #endif

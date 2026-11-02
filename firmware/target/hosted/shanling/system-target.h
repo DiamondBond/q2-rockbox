@@ -28,4 +28,9 @@
 /* power_off() returns to the launcher; 0x51 also makes Q2 Pod the default */
 extern bool q2_boot_stock;
 
+/* Q2 Pod's Key Tone, on the Q2's speaker (keytone-q2.c) */
+extern bool q2_key_tone_on;
+void q2_key_tone_init(void);
+void q2_key_tone(void);
+
 #endif /* __SYSTEM_TARGET_H__ */

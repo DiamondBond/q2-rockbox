@@ -59,6 +59,7 @@ static int gain = 0;
 static int filter = 0;
 static int muted = -1;
 static int vol[2] = { -1000, -1000 }; /* silent until Rockbox sets its volume */
+static bool bt_output;
 
 static void dac_set(unsigned long req, int v)
 {
@@ -80,7 +81,8 @@ static bool bt_connected(void)
  * lost, to choose the device again */
 void audiohw_preinit(void)
 {
-    if (!headphones_inserted() && bt_connected()) {
+    bt_output = !headphones_inserted() && bt_connected();
+    if (bt_output) {
         pcm_alsa_set_playback_device(BT_DEVICE);
         audiohw_mute(false);
         return;
@@ -105,6 +107,11 @@ void audiohw_preinit(void)
 
 void audiohw_postinit(void)
 {
+}
+
+bool shanlingq2_bt_output(void)
+{
+    return bt_output;
 }
 
 void audiohw_close(void)

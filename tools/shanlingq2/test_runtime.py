@@ -274,6 +274,7 @@ static bool is_backlight_on(bool ignored) { (void)ignored; return true; }
 static void backlight_on(void) {}
 static void reset_poweroff_timer(void) {}
 static void button_queue_post(int button, int data) { (void)button; (void)data; }
+static void q2_key_tone_init(void) {}
 #include "firmware/target/hosted/shanling/button-q2.c"
 static int mode, polled, closed;
 int mock_poll(struct pollfd *p, nfds_t n, int timeout) {

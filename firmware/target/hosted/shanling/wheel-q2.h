@@ -35,25 +35,32 @@
  * clockwise lowers it */
 #define WHEEL_DIR   -1
 
-/* The step for config.ini (NULL: none): Q2 Pod's Wheel Sensitivity is the
- * calibration knob for how far a turn scrolls in both systems. As Q2 Pod reads
- * it (wheel_pct), anything but a canonical ten in 50..200 is 50%. */
+/* A setting Q2 Pod saved in config.ini (NULL: none), held in line; "" if missing */
+static inline const char *q2pod_value(FILE *config, const char *key, char *line, int size)
+{
+    size_t n = strlen(key);
+    if (config)
+        rewind(config);
+    while (config && fgets(line, size, config)) {
+        if (!strncmp(line, key, n) && line[n] == '=') {
+            line[n + 1 + strcspn(line + n + 1, "\r\n")] = '\0';
+            return line + n + 1;
+        }
+    }
+    return "";
+}
+
+/* The step for config.ini: Q2 Pod's Wheel Sensitivity is the calibration knob
+ * for how far a turn scrolls in both systems. As Q2 Pod reads it (wheel_pct),
+ * anything but a canonical ten in 50..200 is 50%. */
 static inline int wheel_read_step(FILE *config)
 {
-    static const char key[] = "WHEELSENSITIVITY=";
     char line[256], canonical[16];
-    int pct = 50;
-    while (config && fgets(line, sizeof line, config)) {
-        if (strncmp(line, key, sizeof key - 1))
-            continue;
-        char *v = line + sizeof key - 1;
-        v[strcspn(v, "\r\n")] = '\0';
-        int n = atoi(v);
-        snprintf(canonical, sizeof canonical, "%d", n);
-        if (n >= 50 && n <= 200 && !(n % 10) && !strcmp(v, canonical))
-            pct = n;
-        break;
-    }
+    const char *v = q2pod_value(config, "WHEELSENSITIVITY", line, sizeof line);
+    int pct = 50, n = atoi(v);
+    snprintf(canonical, sizeof canonical, "%d", n);
+    if (n >= 50 && n <= 200 && !(n % 10) && !strcmp(v, canonical))
+        pct = n;
     return (WHEEL_TICK_UNITS * WHEEL_FINE * 50 + pct / 2) / pct;
 }
 

@@ -73,17 +73,18 @@ void button_init_device(void)
         fds[d].fd = -1;
     open_devices();
 
-    FILE *config = fopen("/mnt/data/config.ini", "re");
-    wheel_step = wheel_read_step(config);
-    if (config)
-        fclose(config);
-
     /* Return held at boot: back to the launcher, which starts the stock
      * player (exit 0x51), so the stock OS stays reachable whatever Rockbox does */
     unsigned char keys[KEY_MAX / 8 + 1] = { 0 };
     if (fds[KEYS].fd >= 0 && ioctl(fds[KEYS].fd, EVIOCGKEY(sizeof keys), keys) >= 0 &&
         (keys[KEY_UP / 8] & (1 << (KEY_UP % 8))))
         _exit(0x51);
+
+    FILE *config = fopen("/mnt/data/config.ini", "re");
+    wheel_step = wheel_read_step(config);
+    if (config)
+        fclose(config);
+    q2_key_tone_init();
 }
 
 void button_close_device(void)

@@ -90,7 +90,9 @@ S11module_driver_default); initToolsModule (backlight PWM); initMclModule
 (opens /dev/shanling_dac O_RDWR, starts "nice -n -5 hciplayer -ao alsa &");
 buzzer_init: "cmd_mcu write_firmware /usr/data/libmcu-bare.bin", "cmd_mcu
 bootup", "cmd_mcu reset". The MCU (/dev/mcu) only drives the key-tone buzzer
-("cmd_mcu write_str buzzer"), so Rockbox can skip it. Jack detect: GPIO PA07
+("cmd_mcu write_str buzzer"); Rockbox runs this only while Q2 Pod's Key Tone
+is on (keytone-q2.c: SYSSET KEYTONE, IPOD KEYTONEHP in /mnt/data/config.ini,
+read at startup). Jack detect: GPIO PA07
 (3.5 mm), PA08 (4.4 mm), active low: check_headset_status stores
 gpio_get_value() == 0 as plugged. libhardware2's gpio_get_value returns
 ioctl(/dev/gpio, 0x2000477a, "PA07") unchanged.
@@ -176,6 +178,7 @@ Run from the repository root:
     python3 tools/shanlingq2/test_gain.py
     python3 tools/shanlingq2/test_filter.py
     python3 tools/shanlingq2/test_doom.py
+    python3 tools/shanlingq2/test_keytone.py
     cc tools/shanlingq2/test_wheel.c -o /tmp/q2-wheel && /tmp/q2-wheel
 
 These exercise actual C functions with mocked hardware/ALSA boundaries. The

@@ -1106,6 +1106,8 @@ void keyclick_click(bool rawbutton, int action)
     if (
 #ifdef HAVE_HARDWARE_CLICK
         (global_settings.keyclick || global_settings.keyclick_hardware)
+#elif defined(SHANLING_Q2) && !defined(SIMULATOR)
+        (global_settings.keyclick || q2_key_tone_on)
 #else
         global_settings.keyclick
 #endif
@@ -1154,6 +1156,9 @@ void keyclick_click(bool rawbutton, int action)
 #endif
         }
 #else
+#if defined(SHANLING_Q2) && !defined(SIMULATOR)
+        q2_key_tone();
+#endif
         system_sound_play(SOUND_KEYCLICK);
 #endif
     }
