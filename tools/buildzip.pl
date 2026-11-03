@@ -661,6 +661,15 @@ sub buildzip {
         print STDERR "No wps module present, can't do the WPS magic!\n";
     }
 
+    # The theme's Helvetica has only Latin, so other scripts show as boxes.
+    # Rockbox has no per-glyph fallback, so ship fonts to switch to: 18-Fixed
+    # is the theme font's height, 16-GNU-Unifont covers nearly all of Unicode.
+    if ($modelname =~ /shanlingq2/) {
+        for (("18-Fixed", "16-GNU-Unifont")) {
+            system("$ROOT/tools/convbdf -f -o \"$temp_dir/fonts/$_.fnt\" \"$ROOT/fonts/$_.bdf\" >/dev/null 2>&1");
+        }
+    }
+
     # until buildwps.pl is fixed, manually copy the classic_statusbar theme across
     mkdir "$temp_dir/wps/classic_statusbar", 0777;
     glob_copy("$ROOT/wps/classic_statusbar/*.bmp", "$temp_dir/wps/classic_statusbar");
