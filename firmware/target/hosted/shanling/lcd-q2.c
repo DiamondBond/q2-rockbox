@@ -24,8 +24,11 @@
  * fb0 has two pages: an update is drawn on the hidden one, which is then
  * panned to (as stock demo does, so nothing is drawn while it is shown), and
  * its changed rectangle refreshed when that page is used again. */
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/fb.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -33,6 +36,7 @@
 #include <unistd.h>
 #include "lcd.h"
 #include "lcd-target.h"
+#include "kernel.h"
 #include "panic.h"
 
 static int fd = -1;
@@ -131,13 +135,39 @@ void lcd_update(void)
     lcd_update_rect(0, 0, LCD_WIDTH, LCD_HEIGHT);
 }
 
+static void *blank(void *mode)
+{
+    ioctl(fd, FBIOBLANK, (int)(intptr_t)mode);
+    return NULL;
+}
+
+/* FBIOBLANK powers the panel up or down: lcd_h0209s msleeps about 0.1 s at the
+ * kernel's HZ 100, more than pcm-alsa's ring holds. Every green thread and
+ * SIGIO's refills share this OS thread, so it runs on its own, signals blocked,
+ * while the caller sleeps. */
+static void set_blank(int mode)
+{
+    sigset_t all, old;
+    pthread_t thread;
+    sigfillset(&all);
+    pthread_sigmask(SIG_BLOCK, &all, &old);
+    int err = pthread_create(&thread, NULL, blank, (void *)(intptr_t)mode);
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+    if (err)
+        blank((void *)(intptr_t)mode);
+    else
+        while (pthread_tryjoin_np(thread, NULL) == EBUSY)
+            sleep(1);
+}
+
 void lcd_enable(bool on)
 {
     if (fd < 0 || lcd_active() == on)
         return;
-    lcd_set_active(on);
-    ioctl(fd, FBIOBLANK, on ? FB_BLANK_UNBLANK : FB_BLANK_POWERDOWN);
+    lcd_set_active(false); /* a pan would wait on the blank's fb lock */
+    set_blank(on ? FB_BLANK_UNBLANK : FB_BLANK_POWERDOWN);
     if (on) {
+        lcd_set_active(true);
         /* as stock's enable_fb: unblanking alone left the screen black */
         ioctl(fd, FBIOPAN_DISPLAY, &var);
         send_event(LCD_EVENT_ACTIVATION, NULL);

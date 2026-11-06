@@ -16,12 +16,14 @@ with tempfile.TemporaryDirectory() as directory:
 #include <stdlib.h>
 #include <stdarg.h>
 #include <linux/fb.h>
+#include <pthread.h>
 #define LCD_WIDTH 375
 #define LCD_HEIGHT 320
 #define LCD_EVENT_ACTIVATION 1
 typedef uint32_t fb_data;
 static fb_data frame[LCD_HEIGHT][LCD_WIDTH];
-static unsigned rows, pans, waits;
+static unsigned rows, pans, waits, blanks, sleeps;
+static pthread_t main_thread;
 static bool active = true, fail_pan;
 static const fb_data *address(int x, int y) { rows++; return &frame[y][x]; }
 #define FBADDR(x,y) address(x,y)
@@ -30,11 +32,17 @@ void lcd_set_active(bool on) { active = on; }
 static void send_event(int id, void *p) { (void)id; (void)p; }
 static void panicf(const char *s, ...) { (void)s; abort(); }
 #define ioctl mock_ioctl
+#define sleep mock_sleep
 #include "firmware/target/hosted/shanling/lcd-q2.c"
+unsigned mock_sleep(unsigned ticks) { assert(ticks == 1); sleeps++; usleep(1000); return 0; }
 int mock_ioctl(int dev, unsigned long request, ...) {
     assert(dev == 42);
     if (request == FBIOPAN_DISPLAY) { pans++; return fail_pan ? -1 : 0; }
     if (request == FBIO_WAITFORVSYNC) waits++;
+    if (request == FBIOBLANK) { /* off the green threads' OS thread, nothing panning */
+        assert(!pthread_equal(pthread_self(), main_thread) && !active);
+        usleep(20000); blanks++;
+    }
     return 0;
 }
 static void verify(void) {
@@ -44,6 +52,7 @@ static void verify(void) {
                    == (frame[y][x] | 0xff000000));
 }
 int main(void) {
+    main_thread = pthread_self();
     fd = 42; pages = 2; stride = LCD_HEIGHT + 4; var.yres = LCD_WIDTH;
     panel = calloc(2 * LCD_WIDTH * stride, sizeof(*panel)); assert(panel);
     for (int y = 0; y < LCD_HEIGHT; y++)
@@ -71,12 +80,13 @@ int main(void) {
     fail_pan = false; lcd_update_rect(9,9,1,1); verify();
     lcd_update_rect(0,0,1,1); verify();
     active = false; before = pans; lcd_update(); assert(pans == before);
-    lcd_enable(true); verify();
+    lcd_enable(true); verify(); assert(active && blanks == 1 && sleeps > 0);
     pages = 1; page = 0; synced = false; lcd_update(); verify();
     for (int p = 0; p < 2; p++)
         for (int x = 0; x < LCD_WIDTH; x++)
             for (unsigned y = LCD_HEIGHT; y < stride; y++)
                 assert(panel[p * LCD_WIDTH * stride + x * stride + y] == 0);
+    lcd_enable(false); assert(!active && blanks == 2);
     free(panel);
     return 0;
 }
@@ -171,8 +181,9 @@ int main(void) {
         src, exe = tmp / (name + '.c'), tmp / name
         src.write_text(source)
         # -fno-strict-overflow as the firmware: TIME_AFTER relies on it at wrap
-        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-fsanitize=undefined',
+        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-fsanitize=undefined', '-pthread',
+                        '-D_GNU_SOURCE', # as the Q2 build: pthread_tryjoin_np
                         '-fno-strict-overflow', '-I', str(tmp), '-I', str(root), '-I',
                         str(root / 'firmware/target/hosted'), str(src), '-o', str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
-print('Q2 rotation/pages/pan failure/clipping/wake, battery errors/charger, jack and gauge caches/full: OK')
+print('Q2 rotation/pages/pan failure/clipping/wake/blank off-thread, battery errors/charger, jack and gauge caches/full: OK')
