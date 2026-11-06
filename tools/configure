@@ -2739,6 +2739,7 @@ fi
     appextra=""
     plugins="yes"
     bootoutput="bootloader-$modelname.ipod"
+    arm_thumb_boot=1
     # toolset is the tools within the tools directory that we build for
     # this particular target.
     toolset=$ipodbitmaptools
@@ -4833,7 +4834,7 @@ fi
 if test "$ARG_ARM_THUMB" = "1"; then
   extradefines="$extradefines -DUSE_THUMB"
   GCCOPTS="$GCCOPTS -mthumb-interwork"
-  CC="$toolsdir/thumb-cc.py $CC"
+  CC="$toolsdir/thumb-cc.pl $CC"
 fi
 
 if test "X$endian" = "Xbig"; then

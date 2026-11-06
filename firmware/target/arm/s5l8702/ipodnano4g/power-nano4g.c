@@ -39,13 +39,6 @@ void power_init(void)
 
 void power_off(void)
 {
-#ifndef BOOTLOADER
-    /* Standby may wake straight into the Apple OS, so show it first */
-    lcd_putsf(0, LCD_HEIGHT / 8 - 3, "power_off from %08lx",
-              (unsigned long)__builtin_return_address(0));
-    lcd_update();
-    udelay(5000000);
-#endif
 //     /* USB inserted or EXTON1 */
 //     pmu_set_wake_condition(/*TODO*/);
     pmu_enter_standby();
@@ -84,9 +77,9 @@ unsigned int power_input_status(void)
 
 bool charging_state(void)
 {
-    /* Bit 7 is the flag preinit preserves. No input means not charging. */
+    /* No input means not charging. 0x05 bits 1..2: charger running */
     if (power_input_status() == POWER_INPUT_NONE)
         return false;
-    return (pmu_read(D1759_REG_CHCTL) & D1759_CHCTL_ACTIVE) != 0;
+    return (pmu_read(D1759_REG_STATUSB) & 0x06) != 0;
 }
 #endif /* CONFIG_CHARGING */
