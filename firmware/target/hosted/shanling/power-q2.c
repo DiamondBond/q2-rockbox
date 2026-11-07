@@ -93,17 +93,11 @@ static int gpio(void)
 }
 
 /* the 3.5 mm (PA07) and 4.4 mm (PA08) jacks, active low: stock's
- * check_headset_status takes gpio_get_value() == 0 as plugged. button.c asks
- * every tick and debounces for HZ/2, so read them each HZ/4; tick 0 is not
- * before next_read's initial 0, so the first call always reads. */
+ * check_headset_status takes gpio_get_value() == 0 as plugged. Read on every
+ * call: the HZ/4 cache of v3.8 came with "Pause on headphone unplug" no longer
+ * pausing on a Q2. */
 bool headphones_inserted(void)
 {
-    static bool inserted;
-    static long next_read;
-    if (!TIME_BEFORE(current_tick, next_read)) {
-        inserted = gpio() >= 0 && (ioctl(gpio(), GPIO_GET_VALUE, "PA07") == 0 ||
-                                   ioctl(gpio(), GPIO_GET_VALUE, "PA08") == 0);
-        next_read = current_tick + HZ / 4;
-    }
-    return inserted;
+    return gpio() >= 0 && (ioctl(gpio(), GPIO_GET_VALUE, "PA07") == 0 ||
+                           ioctl(gpio(), GPIO_GET_VALUE, "PA08") == 0);
 }

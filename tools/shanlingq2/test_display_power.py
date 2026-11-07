@@ -126,19 +126,10 @@ bool sysfs_get_int(const char *p, int *v) {
     (void)p; gauge_reads++; *v = capacity; return read_ok;
 }
 int main(void) {
-    /* The jacks: the first call reads, at tick 0 too, then once per HZ/4. */
+    /* The jacks: either one plugged, read on every call. */
     jack = "PA08"; assert(headphones_inserted() && jack_reads == 2);
-    jack = "";
-    for (; current_tick < HZ / 4; current_tick++) assert(headphones_inserted());
-    assert(jack_reads == 2);
-    assert(!headphones_inserted() && jack_reads == 4);
-    jack = "PA07"; current_tick += HZ / 4 - 1;
-    assert(!headphones_inserted() && jack_reads == 4);
-    current_tick++; assert(headphones_inserted() && jack_reads == 5);
-    jack = ""; current_tick = LONG_MAX - 5; assert(!headphones_inserted());
-    jack = "PA07"; current_tick = LONG_MAX; assert(!headphones_inserted());
-    current_tick = LONG_MIN + HZ / 4 - 7; assert(!headphones_inserted());
-    current_tick++; assert(headphones_inserted());
+    jack = ""; assert(!headphones_inserted() && jack_reads == 4);
+    jack = "PA07"; assert(headphones_inserted() && jack_reads == 5);
     /* The gauge: each call tries until a valid reading, then once per 10 s,
      * keeping the last valid one through errors. */
     current_tick = 0;
@@ -186,4 +177,4 @@ int main(void) {
                         '-fno-strict-overflow', '-I', str(tmp), '-I', str(root), '-I',
                         str(root / 'firmware/target/hosted'), str(src), '-o', str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
-print('Q2 rotation/pages/pan failure/clipping/wake/blank off-thread, battery errors/charger, jack and gauge caches/full: OK')
+print('Q2 rotation/pages/pan failure/clipping/wake/blank off-thread, battery errors/charger, jacks, gauge cache/full: OK')
