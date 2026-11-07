@@ -126,7 +126,7 @@ bool sysfs_get_int(const char *p, int *v) {
     (void)p; gauge_reads++; *v = capacity; return read_ok;
 }
 int main(void) {
-    /* The jacks: the first call reads, at tick 0 too, then once per HZ/4. */
+    /* The jacks: the first call reads both pins, at tick 0 too, then once per HZ/4. */
     jack = "PA08"; assert(headphones_inserted() && jack_reads == 2);
     jack = "";
     for (; current_tick < HZ / 4; current_tick++) assert(headphones_inserted());
@@ -134,7 +134,7 @@ int main(void) {
     assert(!headphones_inserted() && jack_reads == 4);
     jack = "PA07"; current_tick += HZ / 4 - 1;
     assert(!headphones_inserted() && jack_reads == 4);
-    current_tick++; assert(headphones_inserted() && jack_reads == 5);
+    current_tick++; assert(headphones_inserted() && jack_reads == 6);
     jack = ""; current_tick = LONG_MAX - 5; assert(!headphones_inserted());
     jack = "PA07"; current_tick = LONG_MAX; assert(!headphones_inserted());
     current_tick = LONG_MIN + HZ / 4 - 7; assert(!headphones_inserted());

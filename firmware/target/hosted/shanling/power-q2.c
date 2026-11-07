@@ -21,7 +21,9 @@
 /* Charging from the AXP2101 PMIC, the level from the cw2015 gauge (the PMIC's
  * power_supply has no capacity on the Q2). For USB storage, shut down to the
  * stock player: dwc2's pc_link stays 0 until it sets up the gadget. */
+#include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -87,23 +89,43 @@ bool q2_boot_stock;
 static int gpio(void)
 {
     static int fd = -1;
-    if (fd < 0)
+    static bool logged;
+    if (fd < 0) {
         fd = open("/dev/gpio", O_RDWR | O_CLOEXEC);
+        if (fd < 0 && !logged) {
+            logged = true;
+            fprintf(stderr, "jack: /dev/gpio: %s\n", strerror(errno));
+        }
+    }
     return fd;
 }
 
 /* the 3.5 mm (PA07) and 4.4 mm (PA08) jacks, active low: stock's
  * check_headset_status takes gpio_get_value() == 0 as plugged. button.c asks
  * every tick and debounces for HZ/2, so read them each HZ/4; tick 0 is not
- * before next_read's initial 0, so the first call always reads. */
+ * before next_read's initial 0, so the first call always reads. Both pins are
+ * read, and each change of either goes to rockbox.log (the launcher keeps
+ * stderr there): "Pause on headphone unplug" is reported not pausing since
+ * v3.8, and nothing on the host shows why. */
 bool headphones_inserted(void)
 {
     static bool inserted;
     static long next_read;
+    static int last_po = -2, last_bal = -2;
     if (!TIME_BEFORE(current_tick, next_read)) {
-        inserted = gpio() >= 0 && (ioctl(gpio(), GPIO_GET_VALUE, "PA07") == 0 ||
-                                   ioctl(gpio(), GPIO_GET_VALUE, "PA08") == 0);
+        int po = -1, bal = -1;
+        if (gpio() >= 0) {
+            po = ioctl(gpio(), GPIO_GET_VALUE, "PA07");
+            bal = ioctl(gpio(), GPIO_GET_VALUE, "PA08");
+        }
+        inserted = po == 0 || bal == 0;
         next_read = current_tick + HZ / 4;
+        if (po != last_po || bal != last_bal) {
+            fprintf(stderr, "jack: PA07 %d PA08 %d at tick %ld\n", po, bal,
+                    current_tick);
+            last_po = po;
+            last_bal = bal;
+        }
     }
     return inserted;
 }
