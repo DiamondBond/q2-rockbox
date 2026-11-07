@@ -97,7 +97,12 @@ as demo's buzzer_init leaves it running whatever Key Tone says; soc_mcu.ko's
 mcu_shutdown only sets DMCS bit 0, which mcu_bootup clears. Jack detect: GPIO PA07
 (3.5 mm), PA08 (4.4 mm), active low: check_headset_status stores
 gpio_get_value() == 0 as plugged. libhardware2's gpio_get_value returns
-ioctl(/dev/gpio, 0x2000477a, "PA07") unchanged.
+ioctl(/dev/gpio, 0x2000477a, "PA07") unchanged. Before any read, demo's
+platform_init calls toolsGpioInput("PA07", 0) and ("PA08", 0), which is
+gpio_set_func: ioctl(/dev/gpio, 0x20004778, &{ "PA07", 2, { "input",
+"pull_hiz" } }) (struct: name, argument count, the arguments); soc_gpio.ko
+matches the strings against func0-3, input and pull_hiz, pull_up, pull_down.
+Rockbox does the same in power-q2.c gpio(): on a cold boot nothing else has.
 
 Display: /dev/fb0 320x375, 32 bpp BGRA (red at 16), two pages panned with
 FBIOPAN_DISPLAY, then FBIO_WAITFORVSYNC (AWTK's lcd_fb, 0x6265bc). The 375x320 landscape view is stored turned clockwise:

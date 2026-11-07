@@ -83,9 +83,21 @@ unsigned int power_input_status(void)
 
 bool q2_boot_stock;
 
-/* /dev/gpio, as libhardware2's gpio_get_value uses it */
+/* /dev/gpio, as libhardware2 uses it */
+#define GPIO_SET_FUNC 0x20004778 /* arg: a struct gpio_func */
 #define GPIO_GET_VALUE 0x2000477a /* arg: the pin's name; returns its level */
 
+struct gpio_func {
+    const char *pin;
+    int count;
+    const char *args[2];
+};
+
+/* Opens it once and, as stock's platform_init does through toolsGpioInput
+ * before check_headset_status ever reads them, makes both jack pins inputs with
+ * no pull. On a cold boot into Rockbox no demo has run, so until this nothing
+ * had configured them, and the pin's reset state can read as plugged whatever
+ * the jack holds: "Pause on headphone unplug" never pausing. */
 static int gpio(void)
 {
     static int fd = -1;
@@ -96,6 +108,11 @@ static int gpio(void)
             logged = true;
             fprintf(stderr, "jack: /dev/gpio: %s\n", strerror(errno));
         }
+        for (int i = 0; fd >= 0 && i < 2; i++) {
+            struct gpio_func f = { i ? "PA08" : "PA07", 2, { "input", "pull_hiz" } };
+            if (ioctl(fd, GPIO_SET_FUNC, &f) < 0)
+                fprintf(stderr, "jack: %s: %s\n", f.pin, strerror(errno));
+        }
     }
     return fd;
 }
@@ -105,8 +122,7 @@ static int gpio(void)
  * every tick and debounces for HZ/2, so read them each HZ/4; tick 0 is not
  * before next_read's initial 0, so the first call always reads. Both pins are
  * read, and each change of either goes to rockbox.log (the launcher keeps
- * stderr there): "Pause on headphone unplug" is reported not pausing since
- * v3.8, and nothing on the host shows why. */
+ * stderr there), to confirm the fix in gpio() from a device. */
 bool headphones_inserted(void)
 {
     static bool inserted;

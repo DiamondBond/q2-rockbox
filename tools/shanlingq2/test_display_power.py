@@ -104,20 +104,28 @@ int main(void) {
 #define TIME_AFTER(a,b) ((long)(b) - (long)(a) < 0)
 #define TIME_BEFORE(a,b) TIME_AFTER(b,a)
 static long current_tick;
-static unsigned reads, gauge_reads, jack_reads;
+static unsigned reads, gauge_reads, jack_reads, jack_setups;
 static bool read_ok = true;
 static const char *status = "Charging";
 static int capacity = 75;
 static const char *jack = "";
 static int mock_open(const char *p, int flags) { (void)p; (void)flags; return 7; }
-static int mock_ioctl(int fd, unsigned long request, const char *pin);
+static int mock_ioctl(int fd, unsigned long request, const void *arg);
 #define open mock_open
 #define ioctl mock_ioctl
 #include "firmware/target/hosted/shanling/power-q2.c"
-static int mock_ioctl(int fd, unsigned long request, const char *pin) {
-    assert(fd == 7 && request == GPIO_GET_VALUE);
+static int mock_ioctl(int fd, unsigned long request, const void *arg) {
+    assert(fd == 7);
+    if (request == GPIO_SET_FUNC) { /* as stock's toolsGpioInput(pin, 0), before any read */
+        const struct gpio_func *f = arg;
+        assert(jack_reads == 0 && !strcmp(f->pin, jack_setups ? "PA08" : "PA07") && f->count == 2
+               && !strcmp(f->args[0], "input") && !strcmp(f->args[1], "pull_hiz"));
+        jack_setups++;
+        return 0;
+    }
+    assert(request == GPIO_GET_VALUE && jack_setups == 2);
     jack_reads++;
-    return strcmp(pin, jack) != 0; /* active low */
+    return strcmp(arg, jack) != 0; /* active low */
 }
 bool sysfs_get_string(const char *p, char *out, int n) {
     (void)p; reads++; strncpy(out, status, n); return read_ok;
@@ -126,8 +134,9 @@ bool sysfs_get_int(const char *p, int *v) {
     (void)p; gauge_reads++; *v = capacity; return read_ok;
 }
 int main(void) {
-    /* The jacks: the first call reads both pins, at tick 0 too, then once per HZ/4. */
-    jack = "PA08"; assert(headphones_inserted() && jack_reads == 2);
+    /* The jacks: the first call configures both pins, then reads both, at tick 0
+     * too, then once per HZ/4. */
+    jack = "PA08"; assert(headphones_inserted() && jack_reads == 2 && jack_setups == 2);
     jack = "";
     for (; current_tick < HZ / 4; current_tick++) assert(headphones_inserted());
     assert(jack_reads == 2);
