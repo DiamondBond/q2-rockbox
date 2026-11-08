@@ -580,13 +580,6 @@ static void hp_unplug_change(bool inserted)
 {
     static bool headphone_caused_pause = true;
 
-#if defined(SHANLING_Q2) && !defined(SIMULATOR)
-    /* rockbox.log: "Pause on headphone unplug" is reported not pausing on a Q2
-     * since v3.8, and nothing on the host shows why */
-    fprintf(stderr, "jack: %s event, audio status %d, unplug mode %d, tick %ld\n",
-            inserted ? "plugged" : "unplugged", audio_status(),
-            global_settings.unplug_mode, current_tick);
-#endif
     if (global_settings.unplug_mode)
     {
         int audio_stat = audio_status();

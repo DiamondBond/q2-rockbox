@@ -102,12 +102,15 @@ platform_init calls toolsGpioInput("PA07", 0) and ("PA08", 0), which is
 gpio_set_func: ioctl(/dev/gpio, 0x20004778, &{ "PA07", 2, { "input",
 "pull_hiz" } }) (struct: name, argument count, the arguments); soc_gpio.ko
 matches the strings against func0-3, input and pull_hiz, pull_up, pull_down.
-Rockbox does the same in power-q2.c gpio(): on a cold boot nothing else has.
-Probably moot: the X2000 PM (table 30-8) resets port A to GPIO input (PAMSK,
-PAPAT1 0x0003_FFFF) with pull-up on (PAPU 0x0003_0FFF covers bits 7 and 8),
-and the DS lists PA07/PA08 as PU pads, so an unconfigured pin reads a jack
-the same unless the bootloader changed it. The unplug-pause report is still
-open; the jack: lines in rockbox.log are what will settle it.
+Rockbox does the same in power-q2.c gpio(). It only drops the internal
+pull-up: the X2000 PM (table 30-8) resets port A to GPIO input (PAMSK, PAPAT1
+0x0003_FFFF) with pull-up on (PAPU 0x0003_0FFF covers bits 7 and 8), and the
+DS lists PA07/PA08 as PU pads. Verified on a Q2 (2026-11-08, v3.15, started
+from Home, 3.5 mm): PA07 0 at plug, 1 at unplug, and the unplug event reached
+hp_unplug_change with audio playing and the setting on. The kernel's sysfs
+GPIO (echo 7 > /sys/class/gpio/export; gpio7, gpio8) reads the same pins
+from Q2 Pod without Rockbox. The original report's log came from a build
+before v3.14, so without these lines.
 
 Display: /dev/fb0 320x375, 32 bpp BGRA (red at 16), two pages panned with
 FBIOPAN_DISPLAY, then FBIO_WAITFORVSYNC (AWTK's lcd_fb, 0x6265bc). The 375x320 landscape view is stored turned clockwise:

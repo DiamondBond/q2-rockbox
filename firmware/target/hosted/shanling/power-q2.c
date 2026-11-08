@@ -21,9 +21,7 @@
 /* Charging from the AXP2101 PMIC, the level from the cw2015 gauge (the PMIC's
  * power_supply has no capacity on the Q2). For USB storage, shut down to the
  * stock player: dwc2's pc_link stays 0 until it sets up the gadget. */
-#include <errno.h>
 #include <fcntl.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -95,23 +93,16 @@ struct gpio_func {
 
 /* Opens it once and, as stock's platform_init does through toolsGpioInput
  * before check_headset_status ever reads them, makes both jack pins inputs with
- * no pull. On a cold boot into Rockbox no demo has run, so until this nothing
- * had configured them, and the pin's reset state can read as plugged whatever
- * the jack holds: "Pause on headphone unplug" never pausing. */
+ * no pull. From reset they are inputs already, with the internal pull-up on
+ * (X2000 PM table 30-8); the board has its own, so this only matches stock. */
 static int gpio(void)
 {
     static int fd = -1;
-    static bool logged;
     if (fd < 0) {
         fd = open("/dev/gpio", O_RDWR | O_CLOEXEC);
-        if (fd < 0 && !logged) {
-            logged = true;
-            fprintf(stderr, "jack: /dev/gpio: %s\n", strerror(errno));
-        }
         for (int i = 0; fd >= 0 && i < 2; i++) {
             struct gpio_func f = { i ? "PA08" : "PA07", 2, { "input", "pull_hiz" } };
-            if (ioctl(fd, GPIO_SET_FUNC, &f) < 0)
-                fprintf(stderr, "jack: %s: %s\n", f.pin, strerror(errno));
+            ioctl(fd, GPIO_SET_FUNC, &f);
         }
     }
     return fd;
@@ -120,28 +111,15 @@ static int gpio(void)
 /* the 3.5 mm (PA07) and 4.4 mm (PA08) jacks, active low: stock's
  * check_headset_status takes gpio_get_value() == 0 as plugged. button.c asks
  * every tick and debounces for HZ/2, so read them each HZ/4; tick 0 is not
- * before next_read's initial 0, so the first call always reads. Both pins are
- * read, and each change of either goes to rockbox.log (the launcher keeps
- * stderr there), to confirm the fix in gpio() from a device. */
+ * before next_read's initial 0, so the first call always reads. */
 bool headphones_inserted(void)
 {
     static bool inserted;
     static long next_read;
-    static int last_po = -2, last_bal = -2;
     if (!TIME_BEFORE(current_tick, next_read)) {
-        int po = -1, bal = -1;
-        if (gpio() >= 0) {
-            po = ioctl(gpio(), GPIO_GET_VALUE, "PA07");
-            bal = ioctl(gpio(), GPIO_GET_VALUE, "PA08");
-        }
-        inserted = po == 0 || bal == 0;
+        inserted = gpio() >= 0 && (ioctl(gpio(), GPIO_GET_VALUE, "PA07") == 0 ||
+                                   ioctl(gpio(), GPIO_GET_VALUE, "PA08") == 0);
         next_read = current_tick + HZ / 4;
-        if (po != last_po || bal != last_bal) {
-            fprintf(stderr, "jack: PA07 %d PA08 %d at tick %ld\n", po, bal,
-                    current_tick);
-            last_po = po;
-            last_bal = bal;
-        }
     }
     return inserted;
 }
