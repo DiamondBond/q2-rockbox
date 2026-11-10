@@ -42,6 +42,7 @@
 #include "action.h"
 #include "powermgmt.h"
 #include "usb.h"
+#include "misc.h"
 
 #include "tuner.h"
 #if CONFIG_TUNER
@@ -95,6 +96,10 @@ int iap_repeatbtn = 0;
  */
 unsigned int iap_timeoutbtn = 0;
 bool iap_btnrepeat = false, iap_btnshuffle = false;
+/* Set when a session ends while muted, see iap_reset_device() */
+static bool iap_unmute_pending = false;
+/* The user's volume when an accessory muted, see iap_periodic() */
+static int iap_mute_volume;
 
 static long thread_stack[(DEFAULT_STACK_SIZE*8)/sizeof(long)];
 static struct event_queue iap_queue;
@@ -353,10 +358,18 @@ void iap_reset_device(struct device_t* device)
     device->notifications = 0;
     device->changed_notifications = 0;
     device->do_notify = false;
+    device->pb_notifications = 0;
+    device->pb_track_changed = false;
+    device->pb_trackpos_ms = 0xFFFFFFFF;
     device->do_power_notify = false;
     device->accinfo = ACCST_NONE;
     device->capabilities = 0;
     device->capabilities_queried = 0;
+    /* Lift a mute the accessory left behind. That needs the codec, so
+     * leave it to iap_periodic(): this may run in interrupt context. */
+    if (device->mute)
+        iap_unmute_pending = true;
+    device->mute = false;
 
     interface_state = IST_STANDARD;
 
@@ -386,12 +399,93 @@ static int iap_task(struct timeout *tmo)
 }
 
 
+/* Map a volume within lo..hi onto 0..255 */
+static unsigned char iap_scale_volume(int volume, int lo, int hi)
+{
+    if (hi <= lo || volume <= lo)
+        return 0;
+    if (volume >= hi)
+        return 255;
+
+    return ((volume - lo) * 255 + (hi - lo) / 2) / (hi - lo);
+}
+
+/* The upper end of the UI volume scale: the volume limit, which never
+ * exceeds the codec's maximum */
+static int iap_ui_volume_max(void)
+{
+    return MIN(global_settings.volume_limit, sound_max(SOUND_VOLUME));
+}
+
+/* The absolute volume byte, 0..255 over the codec's whole range */
+unsigned char iap_volume_to_byte(int volume)
+{
+    return iap_scale_volume(volume, sound_min(SOUND_VOLUME),
+                            sound_max(SOUND_VOLUME));
+}
+
+/* The UI volume byte, which the spec normalises to the volume limit:
+ * 255 is the loudest the user lets the player go */
+unsigned char iap_volume_to_ui_byte(int volume)
+{
+    return iap_scale_volume(volume, sound_min(SOUND_VOLUME),
+                            iap_ui_volume_max());
+}
+
+/* The inverse of iap_volume_to_ui_byte(), for volumes set by an
+ * accessory */
+int iap_byte_to_volume(unsigned char level)
+{
+    int lo = sound_min(SOUND_VOLUME);
+    int hi = iap_ui_volume_max();
+
+    if (hi <= lo)
+        return lo;
+
+    return lo + (level * (hi - lo) + 127) / 255;
+}
+
+/* The inverse of iap_volume_to_byte(), still kept within the volume
+ * limit */
+int iap_abs_byte_to_volume(unsigned char level)
+{
+    int lo = sound_min(SOUND_VOLUME);
+    int hi = sound_max(SOUND_VOLUME);
+
+    if (hi <= lo)
+        return lo;
+
+    return MIN(lo + (level * (hi - lo) + 127) / 255, iap_ui_volume_max());
+}
+
+/* Mute or unmute on behalf of an accessory. Thread context only.
+ *
+ * sound_set_volume() also stores the value in global_status.volume, so
+ * put the user's volume back after muting, or unmuting would restore the
+ * mute level.
+ */
+void iap_set_mute(bool mute)
+{
+    if (mute)
+    {
+        iap_mute_volume = global_status.volume;
+        sound_set_volume(sound_min(SOUND_VOLUME));
+        global_status.volume = iap_mute_volume;
+    }
+    else
+    {
+        setvol();
+    }
+
+    device.mute = mute;
+}
+
 void iap_set_remote_volume(void)
 {
     IAP_TX_INIT(0x03, 0x0D);
     IAP_TX_PUT(0x04);
     IAP_TX_PUT(0x00);
-    IAP_TX_PUT(0xFF & (int)((global_status.volume + 90) * 2.65625));
+    IAP_TX_PUT(iap_volume_to_ui_byte(global_status.volume));
     iap_send_tx();
 }
 
@@ -455,24 +549,15 @@ static void iap_thread(void)
     }
 }
 
-/* called by playback when the next track starts */
+/* called by playback when the next track starts. This runs on the
+ * audio thread, so leave building and sending the notification to
+ * iap_periodic(), which owns the TX buffer.
+ */
 static void iap_track_changed(unsigned short id, void *ignored)
 {
     (void)id;
     (void)ignored;
-    if ((interface_state == IST_EXTENDED) && device.do_notify) {
-        long playlist_pos = playlist_next(0);
-        playlist_pos -= playlist_get_first_index(NULL);
-        if(playlist_pos < 0)
-            playlist_pos += playlist_amount();
-
-        IAP_TX_INIT4(0x04, 0x0027);
-        IAP_TX_PUT(0x01);
-        IAP_TX_PUT_U32(playlist_pos);
-
-        iap_send_tx();
-        return;
-    }
+    device.pb_track_changed = true;
 }
 
 /* Set up the needed infrastructure: the message queue and message
@@ -783,7 +868,7 @@ void iap_get_trackinfo(const unsigned int track, struct mp3entry* id3)
 
     /* If the tracknumber is not the current one,
        read id3 from disk */
-    if(playlist_next(0) != tracknum)
+    if(playlist_get_current()->index != tracknum)
     {
         playlist_get_track_info(NULL, tracknum, &info);
         /* memset(id3, 0, sizeof(*id3)) --get_metadata does this for us */
@@ -793,6 +878,47 @@ void iap_get_trackinfo(const unsigned int track, struct mp3entry* id3)
     }
 }
 
+/* Start playback of the current playlist when stopped, or resume it
+ * when paused. Returns false when there is nothing to play.
+ */
+bool iap_play_or_resume(void)
+{
+    int index;
+
+    if (audio_status() & AUDIO_STATUS_PLAY)
+    {
+        audio_resume();
+        return true;
+    }
+
+    if (playlist_amount() <= 0)
+        return false;
+
+    index = playlist_get_current()->index;
+    playlist_start(index >= 0 ? index : 0, 0, 0);
+    return true;
+}
+
+/* Hold a remote seek button until iap_seek_stop(), or until the
+ * timeout releases it should the accessory never end the seek */
+void iap_seek_start(bool forward)
+{
+    iap_remotebtn = forward ? BUTTON_RC_RIGHT : BUTTON_RC_LEFT;
+    iap_repeatbtn = 2;
+    iap_timeoutbtn = IAP_SEEK_TIMEOUT;
+}
+
+void iap_seek_stop(void)
+{
+    if (iap_timeoutbtn == 0)
+        return;
+
+    /* Let the button driver see the release before the next packet */
+    iap_remotebtn = BUTTON_NONE;
+    iap_repeatbtn = 2;
+    iap_timeoutbtn = 0;
+}
+
 uint32_t iap_get_trackpos(void)
 {
     struct mp3entry *id3 = audio_current_track();
@@ -800,18 +926,39 @@ uint32_t iap_get_trackpos(void)
     return id3->elapsed;
 }
 
+/* The index of the current track as the accessory counts them, from
+ * first_index on. Under shuffle the current track can come before
+ * first_index in the playlist, so wrap the difference around.
+ */
 uint32_t iap_get_trackindex(void)
 {
     struct playlist_info* playlist = playlist_get_current();
+    int index = playlist->index - playlist->first_index;
 
-    return (playlist->index - playlist->first_index);
+    if (index < 0)
+        index += playlist->amount;
+
+    return index;
 }
 
 void iap_periodic(void)
 {
     static int count;
+    static int pb_count;
 
     if(!iap_setupflag) return;
+
+    if (iap_unmute_pending)
+    {
+        iap_unmute_pending = false;
+        if (!device.mute)
+            setvol();
+    }
+
+    /* setvol() makes a volume changed on the player audible, which lifts
+     * an accessory's mute. The volume notification reports it. */
+    if (device.mute && (global_status.volume != iap_mute_volume))
+        device.mute = false;
 
     /* Handle pending authentication tasks */
     switch (device.auth.state)
@@ -967,20 +1114,86 @@ void iap_periodic(void)
         }
     }
 
-    if (!device.do_notify) return;
-    if ((device.notifications == 0) && (interface_state != IST_EXTENDED)) return;
+    /* Extended Interface PlayStatusChangeNotification */
+    if (device.pb_track_changed)
+    {
+        device.pb_track_changed = false;
 
-    /* Volume change notifications are sent every 100ms */
-    if (device.notifications & (BIT_N(4) | BIT_N(16))) {
-        /* Currently we do not track volume changes for BIT_N(16),
-         *
-         */
-        IAP_TX_INIT(0x03, 0x09);
-        IAP_TX_PUT(0x04);
-        IAP_TX_PUT(0x00);
-        IAP_TX_PUT(0xFF &(int)((global_status.volume + 90) * 2.65625));
-        device.changed_notifications |= BIT_N(4);
-        iap_send_tx();
+        /* Track index */
+        if ((interface_state == IST_EXTENDED) &&
+            (device.pb_notifications & BIT_N(2)))
+        {
+            IAP_TX_INIT4(0x04, 0x0027);
+            IAP_TX_PUT(0x01);
+            IAP_TX_PUT_U32(iap_get_trackindex());
+
+            iap_send_tx();
+        }
+    }
+
+    if ((interface_state == IST_EXTENDED) &&
+        (device.pb_notifications & BIT_N(3)))
+    {
+        /* Track position, at most every 500ms, and only when it has
+         * changed: nothing is sent while paused or stopped */
+        if (++pb_count >= 5)
+        {
+            uint32_t t = iap_get_trackpos();
+
+            pb_count = 0;
+
+            if (t != device.pb_trackpos_ms)
+            {
+                IAP_TX_INIT4(0x04, 0x0027);
+                IAP_TX_PUT(0x04);
+                IAP_TX_PUT_U32(t);
+
+                iap_send_tx();
+
+                device.pb_trackpos_ms = t;
+            }
+        }
+    }
+
+    if (!device.do_notify) return;
+    if (device.notifications == 0) return;
+
+    /* Volume changes are checked every 100ms */
+    if (device.notifications & (BIT_N(4) | BIT_N(16)))
+    {
+        unsigned char volume = iap_volume_to_ui_byte(global_status.volume);
+
+        if ((device.volume != volume) || (device.mute_notified != device.mute))
+        {
+            /* Mute/UI volume */
+            if (device.notifications & BIT_N(4))
+            {
+                IAP_TX_INIT(0x03, 0x09);
+                IAP_TX_PUT(0x04);
+                IAP_TX_PUT(device.mute ? 0x01 : 0x00);
+                IAP_TX_PUT(device.mute ? 0x00 : volume);
+                device.changed_notifications |= BIT_N(4);
+
+                iap_send_tx();
+            }
+
+            /* Mute/UI/Absolute volume */
+            if (device.notifications & BIT_N(16))
+            {
+                IAP_TX_INIT(0x03, 0x09);
+                IAP_TX_PUT(0x10);
+                IAP_TX_PUT(device.mute ? 0x01 : 0x00);
+                IAP_TX_PUT(device.mute ? 0x00 : volume);
+                IAP_TX_PUT(device.mute ? 0x00 :
+                           iap_volume_to_byte(global_status.volume));
+                device.changed_notifications |= BIT_N(16);
+
+                iap_send_tx();
+            }
+
+            device.volume = volume;
+            device.mute_notified = device.mute;
+        }
     }
 
     /* All other events are sent every 500ms */
@@ -990,19 +1203,6 @@ void iap_periodic(void)
     count = 0;
 
     /* RemoteEventNotification */
-
-    /* Mode 04 PlayStatusChangeNotification */
-    /* Are we in Extended Mode */
-    if (interface_state == IST_EXTENDED) {
-        /* Return Track Position */
-        struct mp3entry *id3 = audio_current_track();
-        unsigned long time_elapsed = id3->elapsed;
-        IAP_TX_INIT4(0x04, 0x0027);
-        IAP_TX_PUT(0x04);
-        IAP_TX_PUT_U32(time_elapsed);
-
-        iap_send_tx();
-    }
 
     /* Track position (ms)  or Track position (s) */
     if (device.notifications & (BIT_N(0) | BIT_N(15)))
@@ -1328,9 +1528,11 @@ void iap_interface_state_change(const enum interface_state new)
 {
     if (((interface_state == IST_EXTENDED) && (new == IST_STANDARD)) ||
         ((interface_state == IST_STANDARD) && (new == IST_EXTENDED))) {
+        /* Pause the engine directly: outside the WPS a synthetic Play
+         * button would activate the selected item instead */
         if (audio_status() == AUDIO_STATUS_PLAY)
         {
-            REMOTE_BUTTON(BUTTON_RC_PLAY);
+            audio_pause();
         }
     }
 

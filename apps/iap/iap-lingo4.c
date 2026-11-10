@@ -1297,7 +1297,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 case 0x05: /* Track    */
                 case 0x06: /* Composer */
                 {
-                    audio_skip(index - playlist_next(0));
+                    audio_skip(index - iap_get_trackindex());
                     break;
                 }
                 default:
@@ -1714,13 +1714,9 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
         {
             unsigned char data[] = {0x04, 0x00, 0x1F,
                                     0xFF, 0xFF, 0xFF, 0xFF};
-            long playlist_pos = playlist_next(0);
             int status = audio_status();
-            playlist_pos -= playlist_get_first_index(NULL);
-            if(playlist_pos < 0)
-                playlist_pos += playlist_amount();
             if ((status == AUDIO_STATUS_PLAY) || (status & AUDIO_STATUS_PAUSE))
-                put_u32(&data[3], playlist_pos);
+                put_u32(&data[3], iap_get_trackindex());
             iap_send_pkt(data, sizeof(data));
             break;
         }
@@ -1903,7 +1899,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 tracknum -= playlist_amount();
             /* If the tracknumber is not the current one,
                read id3 from disk */
-            if(playlist_next(0) != tracknum)
+            if(playlist_get_current()->index != tracknum)
             {
                 struct playlist_track_info info;
                 playlist_get_track_info(NULL, tracknum, &info);
@@ -1988,15 +1984,40 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              *              0x01 = Enable all change notification
              *              0x02 - 0xFF = Reserved
              *  7     0xNN   Telegram payload checksum byte
+             *
+             * Protocol version 1.08 and later also have a four byte form,
+             * carrying a bitmask of the notifications to enable. Bits
+             * 31:13 are reserved, so its first byte is always 0x00.
              */
         {
-            device.do_notify = buf[3] ? true : false;
+            CHECKLEN(4);
+
+            if (len >= 7)
+            {
+                device.pb_notifications = get_u32(&buf[3]);
+            }
+            else if (buf[3] != 0x00)
+            {
+                /* Any non-zero value enables basic play state, track
+                 * index, track time offset (ms) and chapter index
+                 * changes */
+                device.pb_notifications =
+                    BIT_N(0) | BIT_N(2) | BIT_N(3) | BIT_N(5);
+            }
+            else
+            {
+                device.pb_notifications = 0;
+            }
+            /* Only report track changes from now on, and report the
+             * current position once */
+            device.pb_track_changed = false;
+            device.pb_trackpos_ms = 0xFFFFFFFF;
             /* respond with cmd ok packet */
             cmd_ok(cmd);
             break;
         }
         case 0x0027: /* PlayStatusChangeNotification */
-        /* This response is handled by iap_track_changed() and iap_periodic()
+        /* This response is sent by iap_periodic()
          * within iap-core.c
          * The following is the description for the Apple Firmware
          *
@@ -2116,9 +2137,9 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              *
              */
         {
-            int paused = !!(audio_status() & AUDIO_STATUS_PAUSE);
             uint32_t index;
             uint32_t trackcount;
+            CHECKLEN(7);
             index = get_u32(&buf[3]);
             trackcount = playlist_amount();
             if (index >= trackcount)
@@ -2126,18 +2147,30 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                 break;
             }
-            audio_pause();
-            if(global_settings.playlist_shuffle)
+            /* The index refers to the order the accessory enumerated the
+             * tracks in, which is the current play order: shuffle is
+             * already applied to it, so reordering the playlist here
+             * would play a different track than the one selected.
+             */
+            if (!(audio_status() & AUDIO_STATUS_PLAY))
             {
-                playlist_randomise(NULL, current_tick, true);
+                /* audio_skip() does nothing while stopped, so start
+                 * playback at the selected track instead */
+                long tracknum = index + playlist_get_first_index(NULL);
+
+                if (tracknum >= (long)trackcount)
+                    tracknum -= trackcount;
+                playlist_start(tracknum, 0, 0);
             }
             else
             {
-                playlist_sort(NULL, true);
-            }
-            audio_skip(index - playlist_next(0));
-            if (!paused)
+                /* The selected track plays even when playback was
+                 * paused. Head units such as the Audi MMI pause before
+                 * selecting the next track and expect it to play. */
+                audio_pause();
+                audio_skip(index - iap_get_trackindex());
                 audio_resume();
+            }
             /* respond with cmd ok packet */
             cmd_ok(cmd);
             break;
@@ -2178,33 +2211,85 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              * Reserved             0x0A - 0xFF
              *
              */
+            int status = audio_status();
+
+            CHECKLEN(4);
+
+            /* Drive the playback engine directly. Synthetic remote
+             * buttons only do the right thing in the WPS: elsewhere Play
+             * selects the highlighted item and Next/Previous move the
+             * cursor.
+             */
             switch(buf[3])
             {
                 case 0x01: /* play/pause */
-                    iap_remotebtn = BUTTON_RC_PLAY;
-                    iap_repeatbtn = 2;
+                    if (status & AUDIO_STATUS_PAUSE)
+                        audio_resume();
+                    else if (status & AUDIO_STATUS_PLAY)
+                        audio_pause();
+                    else if (!iap_play_or_resume())
+                    {
+                        cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                        return;
+                    }
                     break;
                 case 0x02: /* stop */
-                    iap_remotebtn = BUTTON_RC_PLAY|BUTTON_REPEAT;
-                    iap_repeatbtn = 2;
+                    iap_seek_stop();
+                    audio_stop();
                     break;
                 case 0x03: /* skip++ */
-                    iap_remotebtn = BUTTON_RC_RIGHT;
-                    iap_repeatbtn = 2;
-                    break;
                 case 0x04: /* skip-- */
-                    iap_remotebtn = BUTTON_RC_LEFT;
-                    iap_repeatbtn = 2;
+                    if (!(status & AUDIO_STATUS_PLAY))
+                    {
+                        /* Start playback at the next or previous track
+                         * in play order instead of failing */
+                        long trackcount = playlist_amount();
+                        long pos;
+
+                        if (trackcount <= 0)
+                        {
+                            cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                            return;
+                        }
+                        pos = (playlist_get_current()->index < 0) ?
+                              0 : (long)iap_get_trackindex();
+                        pos += (buf[3] == 0x03) ? 1 : -1;
+                        if (pos < 0)
+                            pos = 0;
+                        else if (pos >= trackcount)
+                            pos = trackcount - 1;
+                        /* From play order to a playlist index */
+                        pos += playlist_get_first_index(NULL);
+                        if (pos >= trackcount)
+                            pos -= trackcount;
+                        playlist_start(pos, 0, 0);
+                        break;
+                    }
+                    if (buf[3] == 0x03)
+                        audio_next();
+                    else
+                        audio_prev();
                     break;
                 case 0x05: /* ffwd */
-                    iap_remotebtn = BUTTON_RC_RIGHT;
-                    break;
                 case 0x06: /* frwd */
-                    iap_remotebtn = BUTTON_RC_LEFT;
+                    if (!(status & AUDIO_STATUS_PLAY))
+                    {
+                        cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                        return;
+                    }
+                    iap_seek_start(buf[3] == 0x05);
                     break;
                 case 0x07: /* end ffwd/frwd */
-                    iap_remotebtn = BUTTON_NONE;
+                    iap_seek_stop();
                     break;
+                case 0x08: /* next chapter */
+                case 0x09: /* previous chapter */
+                    /* Tracks have no chapters here */
+                    cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                    return;
+                default:
+                    cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                    return;
             }
             /* respond with cmd ok packet */
             cmd_ok(cmd);
@@ -2935,7 +3020,18 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              */
         {
             int paused = !!(audio_status() & AUDIO_STATUS_PAUSE);
-            long tracknum = get_u32(&buf[3]);
+            long tracknum;
+
+            CHECKLEN(7);
+            tracknum = get_u32(&buf[3]);
+
+            /* Usable only while playing or paused, as described above:
+             * audio_skip() does nothing while stopped */
+            if (!(audio_status() & AUDIO_STATUS_PLAY))
+            {
+                cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                break;
+            }
 
             /* audio_skip() walks an out-of-range offset back one track at
              * a time, holding id3_mutex and never yielding, so a wild
@@ -2948,7 +3044,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             }
 
             audio_pause();
-            audio_skip(tracknum - playlist_next(0));
+            audio_skip(tracknum - iap_get_trackindex());
             if (!paused)
                 audio_resume();
 
@@ -3141,7 +3237,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                     audio_pause();
                     audio_skip(-iap_get_trackindex());
                     playlist_sort(NULL, true);
-                    audio_skip(index - playlist_next(0));
+                    audio_skip(index - iap_get_trackindex());
                     break;
                 }
             }
