@@ -4092,8 +4092,7 @@ fi
     modelname="shanlingq2"
     target="SHANLING_Q2"
     memory=64
-    # the simulator builds with the host's compiler
-    case "$ARG_TYPE" in [Ss]) ;; *) q2linuxcc ;; esac
+    # the compiler, q2linuxcc, is set up with the build type
     tool="cp "
     boottool="cp "
     bmp2rb_mono="$rootdir/tools/bmp2rb -f 0"
@@ -4392,6 +4391,13 @@ elif [ "$bootloader_only" = "1" ]; then
 else
   echo "Build (N)ormal, (A)dvanced, (S)imulator, (B)ootloader, (C)heckWPS, (D)atabase tool, (W)arble codec tool$gdbstub: (Defaults to N)"
   btype=`input`;
+fi
+
+# The Shanling Q2's compiler (q2linuxcc) needs Q2_SYSROOT and sets link options
+# that the host's can't use, so device builds only: the simulator, checkwps,
+# the database tool and warble build with the host's compiler (simcc)
+if [ "$modelname" = "shanlingq2" ]; then
+  case $btype in [SsCcDdWw]) ;; *) q2linuxcc ;; esac
 fi
 
   case $btype in
