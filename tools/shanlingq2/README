@@ -196,6 +196,7 @@ Run from the repository root:
     python3 tools/shanlingq2/test_filter.py
     python3 tools/shanlingq2/test_doom.py
     python3 tools/shanlingq2/test_keytone.py
+    python3 tools/shanlingq2/test_keymap.py
     cc tools/shanlingq2/test_wheel.c -o /tmp/q2-wheel && /tmp/q2-wheel
 
 These exercise actual C functions with mocked hardware/ALSA boundaries. The

@@ -39,6 +39,18 @@ CONTEXT_CUSTOM|CONTEXT_TREE = the standard list/tree defines (without directions
 
 */
 
+#ifdef SHANLING_Q2
+/* For a context that acts on a side key's press, or the yes/no screen, where
+ * any other action answers no: the tap's release stops here instead of
+ * falling through to button_context_standard's track skip
+ * (tools/shanlingq2/test_keymap.py) */
+#define Q2_SIDE_KEYS_NO_SKIP \
+    { ACTION_NONE,              BUTTON_LEFT|BUTTON_REL,             BUTTON_LEFT }, \
+    { ACTION_NONE,              BUTTON_RIGHT|BUTTON_REL,            BUTTON_RIGHT },
+#else
+#define Q2_SIDE_KEYS_NO_SKIP
+#endif
+
 static const struct button_mapping button_context_standard[]  = {
     { ACTION_STD_PREV,          BUTTON_SCROLL_BACK,                 BUTTON_NONE },
     { ACTION_STD_PREVREPEAT,    BUTTON_SCROLL_BACK|BUTTON_REPEAT,   BUTTON_NONE },
@@ -46,8 +58,9 @@ static const struct button_mapping button_context_standard[]  = {
     { ACTION_STD_NEXTREPEAT,    BUTTON_SCROLL_FWD|BUTTON_REPEAT,    BUTTON_NONE },
 #ifdef SHANLING_Q2
     /* The side keys are the Q2's previous and next: they skip a track from
-     * any screen, as on stock, via the multimedia keys default_event_handler
-     * takes. So Return is the only back key: up one level, everywhere. */
+     * any screen that doesn't use them (Q2_SIDE_KEYS_NO_SKIP), as on stock,
+     * via the multimedia keys default_event_handler takes. So Return is the
+     * only back key: up one level, everywhere. */
     { BUTTON_MULTIMEDIA_PREV,   BUTTON_LEFT|BUTTON_REL,             BUTTON_LEFT },
     { BUTTON_MULTIMEDIA_NEXT,   BUTTON_RIGHT|BUTTON_REL,            BUTTON_RIGHT },
     { ACTION_STD_OK,            BUTTON_SELECT|BUTTON_REL,           BUTTON_SELECT },
@@ -119,6 +132,7 @@ static const struct button_mapping button_context_settings[]  = {
     { ACTION_STD_PREVREPEAT,        BUTTON_LEFT|BUTTON_REPEAT,    BUTTON_NONE },
     { ACTION_STD_NEXT,              BUTTON_RIGHT,                BUTTON_NONE },
     { ACTION_STD_NEXTREPEAT,        BUTTON_RIGHT|BUTTON_REPEAT,  BUTTON_NONE },
+    Q2_SIDE_KEYS_NO_SKIP
     { ACTION_STD_OK,                BUTTON_SELECT|BUTTON_REL,    BUTTON_NONE },
     { ACTION_STD_CANCEL,            BUTTON_MENU|BUTTON_REL,      BUTTON_MENU },
 
@@ -128,6 +142,7 @@ static const struct button_mapping button_context_settings[]  = {
 static const struct button_mapping button_context_yesno[]  = {
     { ACTION_YESNO_ACCEPT,          BUTTON_SELECT,                  BUTTON_NONE },
     { ACTION_STD_CANCEL,          BUTTON_PLAY,                  BUTTON_NONE },
+    Q2_SIDE_KEYS_NO_SKIP
     LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_STD)
 }; /* button_context_yesno */
 
@@ -145,6 +160,7 @@ static const struct button_mapping button_context_quickscreen[]  = {
     { ACTION_QS_LEFT,       BUTTON_LEFT|BUTTON_REPEAT,      BUTTON_NONE },
     { ACTION_QS_RIGHT,      BUTTON_RIGHT,                   BUTTON_NONE },
     { ACTION_QS_RIGHT,      BUTTON_RIGHT|BUTTON_REPEAT,     BUTTON_NONE },
+    Q2_SIDE_KEYS_NO_SKIP
     { ACTION_STD_CANCEL,    BUTTON_SELECT|BUTTON_REL,       BUTTON_SELECT },
     { ACTION_QS_VOLDOWN,   BUTTON_SCROLL_BACK,                 BUTTON_NONE },
     { ACTION_QS_VOLDOWN,   BUTTON_SCROLL_BACK|BUTTON_REPEAT,   BUTTON_NONE },

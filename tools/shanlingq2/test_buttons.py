@@ -144,6 +144,7 @@ int main(void) {
 '''
 
 keymap = (root / 'apps/keymaps/keymap-ipod.c').read_text()
+keymap = keymap[keymap.index('button_context_standard[]'):]
 q2 = keymap[keymap.index('#ifdef SHANLING_Q2'):keymap.index('#else')]
 assert 'BUTTON_MULTIMEDIA_PREV,   BUTTON_LEFT|BUTTON_REL' in q2
 assert 'BUTTON_MULTIMEDIA_NEXT,   BUTTON_RIGHT|BUTTON_REL' in q2
