@@ -146,6 +146,13 @@
 #include <sys/sysinfo.h>
 #endif
 
+#if defined(EROS_QN)
+#include "power-erosqnative.h"
+#include "lcd-erosqnative.h"
+#include "eros_qn_codec.h"
+#include "x1000/gpio.h"
+#endif
+
 #define SCREEN_MAX_CHARS (LCD_WIDTH / SYSFONT_WIDTH)
 
 static const char* threads_getname(int selected_item, void *data,
@@ -2700,6 +2707,22 @@ static bool dbg_device_data(void)
 
 #if defined(EROS_QN)
     simplelist_addline("Hardware Revision: %d", (int)device_data.hw_rev);
+    simplelist_addline("DAC type: %s", es9018k2m_present_flag ? "ES9018K2M" : "PCM5102A");
+    simplelist_addline("PMU Type: %s",
+                       (eros_qn_pmu_type == EROS_QN_PMU_AXP192 ? "AXP192" :
+                       (eros_qn_pmu_type == EROS_QN_PMU_AXP2101 ? "AXP2101" : "unknown!")));
+    simplelist_addline("LCD autodetected: %s", eros_qn_lcd_autodetected ? "yes" : "no");
+    simplelist_addline("LCD ID: %06" PRIx32, eros_qn_lcd_id);
+    simplelist_addline("LCD ID4: %06" PRIx32, eros_qn_lcd_id4);
+
+    /* Print state of input gpios */
+    for (int i = 0; i < 4; ++i)
+    {
+        simplelist_addline("GPIO_%c: %08lx", "ABCD"[i], (REG_GPIO_PIN(i) &
+                                                         REG_GPIO_PAT1(i) &
+                                                         REG_GPIO_MSK(i) &
+                                                         ~REG_GPIO_INT(i)));
+    }
 #endif
     simplelist_addline("Struct Ver: %d", (int)device_data.version);
 

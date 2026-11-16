@@ -927,7 +927,9 @@ static bool skip_bytes_read_buf(struct jpeg* p_jpeg)
     {
         int count = -p_jpeg->buf_left;
         fill_buf(p_jpeg);
-        if (p_jpeg->buf_left < 0)
+        /* nothing read is the end of the data, as in jpeg_getc(); asking
+           again would take the same turn forever */
+        if (p_jpeg->buf_left <= 0)
             return false;
         p_jpeg->buf_left -= count;
         p_jpeg->buf_index += count;
@@ -969,9 +971,11 @@ static void jpeg_putc(struct jpeg* p_jpeg)
 }
 #endif
 
+/* A segment shorter than what was read of it leaves a negative count,
+ * which would move the read position back before the buffer. */
 #define e_skip_bytes(jpeg, count) \
 do {\
-    if (UNLIKELY(!skip_bytes((jpeg),(count)))) \
+    if (UNLIKELY((count) < 0 || !skip_bytes((jpeg),(count)))) \
         return -1; \
 } while (0)
 
@@ -989,6 +993,35 @@ do {\
     unsigned char c = LIKELY(cp) ? *cp : (def); \
     c; \
 })
+
+/* Does this table of code counts describe a prefix code, or does it claim
+ * more codes of some length than that length has room for?
+ *
+ * fix_huff_tbl() generates the codes by the canonical rule, and an
+ * over-subscribed table runs that generator past the end of its length:
+ * huffcode[p] grows beyond 2^l, and the lookahead fill shifts it left into
+ * look_nbits[], which has 256 entries. 162 codes of length one -- which the
+ * AC length check permits -- puts the write about 80 KB past the end of it.
+ * The same overflow leaves mincode[] above any code that can be read, so the
+ * slow decode path would index pub[] from a negative offset as well.
+ *
+ * Every length doubles the codes available and spends what the table asks
+ * for; going negative means it asked for more than exist. An incomplete
+ * table (some left over) decodes, and is accepted.
+ */
+static bool huff_counts_ok(const int *counts)
+{
+    int l, left = 1;
+
+    for (l = 0; l < 16; l++)
+    {
+        left <<= 1;
+        left -= counts[l];
+        if (left < 0)
+            return false;
+    }
+    return true;
+}
 
 /* Preprocess the JPEG JFIF file */
 static int process_markers(struct jpeg* p_jpeg)
@@ -1055,7 +1088,9 @@ static int process_markers(struct jpeg* p_jpeg)
                     if (p_jpeg->frameheader[i].quanttable_select > 3)
                         return -8; /* Unsupported quantization table */
                     if (p_jpeg->frameheader[i].horizontal_sampling > 2
-                     || p_jpeg->frameheader[i].vertical_sampling > 2)
+                     || p_jpeg->frameheader[i].vertical_sampling > 2
+                     || p_jpeg->frameheader[i].horizontal_sampling < 1
+                     || p_jpeg->frameheader[i].vertical_sampling < 1)
                     return -3; /* Unsupported SOF0 subsampling */
                 }
                 p_jpeg->blocks = n;
@@ -1127,6 +1162,9 @@ static int process_markers(struct jpeg* p_jpeg)
                             }
                             if(16 + sum > AC_LEN)
                                 return -10; /* longer than allowed */
+                            if(!huff_counts_ok(
+                                   p_jpeg->hufftable[i].huffmancodes_ac))
+                                return -13; /* not a prefix code */
 
                             for (; j < 16 + sum; j++)
                             {
@@ -1146,6 +1184,9 @@ static int process_markers(struct jpeg* p_jpeg)
                             }
                             if(16 + sum > DC_LEN)
                                 return -11; /* longer than allowed */
+                            if(!huff_counts_ok(
+                                   p_jpeg->hufftable[i].huffmancodes_dc))
+                                return -14; /* not a prefix code */
 
                             for (; j < 16 + sum; j++)
                             {
@@ -1789,7 +1830,7 @@ static void search_restart(struct jpeg *p_jpeg)
             code |= get_bits((p_jpeg), 1); \
             nb++; \
         } \
-        if (nb > 16) /* error in Huffman */ \
+        if (nb > 16 || code < (tbl)->mincode[nb]) /* error in Huffman */ \
         { \
             r = 0; s = 0; /* fake a zero, this is most safe */ \
         } else { \
@@ -1824,7 +1865,7 @@ static void search_restart(struct jpeg *p_jpeg)
             code |= get_bits((p_jpeg), 1); \
             nb++; \
         } \
-        if (nb > 16) /* error in Huffman */ \
+        if (nb > 16 || code < (tbl)->mincode[nb]) /* error in Huffman */ \
         { \
             s = 0; /* fake a zero, this is most safe */ \
         } else { \

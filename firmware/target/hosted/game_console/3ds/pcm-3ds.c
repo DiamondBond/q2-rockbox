@@ -31,10 +31,10 @@
 #include <3ds/ndsp/channel.h>
 #include <3ds/services/dsp.h>
 #include <3ds/synchronization.h>
+#include <3ds/svc.h>
 #include <3ds/allocator/linear.h>
 
 #include "sys_atomic.h"
-#include "sys_thread.h"
 
 #include "config.h"
 #include "debug.h"
@@ -72,6 +72,8 @@ static volatile int _pcm_shutdown = 0;
 /* Mutex for PCM thread suspend/unsuspend. */
 static RecursiveLock _pcm_lock_mtx;         /* audio device mutex */
 static LightEvent    _dsp_callback_event;   /* dsp callback synchronization flag */
+static LightEvent    _pcm_start_event;      /* playback started or shutdown */
+static volatile int  _pcm_running = 0;      /* between sink_dma_start and _stop */
 
 static Thread _pcm_thread = NULL;
 static int _pcm_thread_id = -1;
@@ -83,13 +85,20 @@ static s16 *_dsp_audio_buffer = NULL;
 /* Microphone sampling rate */
 extern int _pcm_encode_rate;
 
+static inline int current_thread_id(void)
+{
+    u32 thread_id = 0;
+    svcGetThreadId(&thread_id, CUR_THREAD_HANDLE);
+    return (int)thread_id;
+}
+
 static inline bool is_in_audio_thread(int audio_thread_id)
 {
     /* The device thread locks the same mutex, but not through the public API.
        This check is in case the application, in the audio callback,
        tries to lock the thread that we've already locked from the
        device thread...just in case we only have non-recursive mutexes. */
-    if ( (sys_thread_id() == audio_thread_id)) {
+    if ( (current_thread_id() == audio_thread_id)) {
         return true;
     }
 
@@ -110,33 +119,45 @@ static void sink_unlock(void)
     }
 }
 
-static void pcm_write_to_soundcard(const void *pcm_buffer, size_t pcm_buffer_size, ndspWaveBuf *dsp_buffer)
+/* returns the bytes queued: one wave buffer holds at most one mixer frame */
+static size_t pcm_write_to_soundcard(const void *pcm_buffer, size_t pcm_buffer_size, ndspWaveBuf *dsp_buffer)
 {
     s16 *buffer = dsp_buffer->data_pcm16;
+
+    if (pcm_buffer_size > MIX_FRAME_SAMPLES * 2 * sizeof(s16))
+        pcm_buffer_size = MIX_FRAME_SAMPLES * 2 * sizeof(s16);
     memcpy(buffer, pcm_buffer, pcm_buffer_size);
 
+    /* the DSP may start reading as soon as the buffer is queued */
+    DSP_FlushDataCache(buffer, pcm_buffer_size);
     dsp_buffer->nsamples = pcm_buffer_size / 2 / sizeof(s16);
     ndspChnWaveBufAdd(0, dsp_buffer);
-    DSP_FlushDataCache(buffer, pcm_buffer_size);
+    return pcm_buffer_size;
 }
 
 bool fill_buffer(ndspWaveBuf *dsp_buffer)
 {
+    /* The pcm thread is a libctru thread outside the Rockbox scheduler:
+     * run Rockbox callbacks as an emulated interrupt. */
+    sim_enter_irq_handler();
     if(_pcm_buffer_size == 0)
     {
         /* Retrive a new PCM buffer from Rockbox. */
         if(!pcm_play_dma_complete_callback(PCM_DMAST_OK, &_pcm_buffer, &_pcm_buffer_size))
         {
+            sim_exit_irq_handler();
             /* DEBUGF("DEBUG %s: No new buffer.\n", __func__); */
             svcSleepThread(10000);
             return false;
         }
     }
     pcm_play_dma_status_callback(PCM_DMAST_STARTED);
+    sim_exit_irq_handler();
 
-    /* This relies on Rockbox PCM frame buffer size == ALSA PCM frame buffer size. */
-    pcm_write_to_soundcard(_pcm_buffer, _pcm_buffer_size, dsp_buffer);
-    _pcm_buffer_size = 0;
+    /* anything left over goes into the next wave buffer */
+    size_t used = pcm_write_to_soundcard(_pcm_buffer, _pcm_buffer_size, dsp_buffer);
+    _pcm_buffer = (const char *)_pcm_buffer + used;
+    _pcm_buffer_size -= used;
 
     return true;
 }
@@ -147,10 +168,17 @@ void pcm_thread_run(void* nothing)
 
     DEBUGF("DEBUG %s: Thread start.\n", __func__);
     
-    _pcm_thread_id = sys_thread_id();
+    _pcm_thread_id = current_thread_id();
 
     while(!AtomicGet(&_pcm_shutdown))
     {
+        /* NDSP calls back every audio frame (~200 times a second) even
+         * when nothing plays: sleep until playback starts instead */
+        if (!AtomicGet(&_pcm_running)) {
+            LightEvent_Wait(&_pcm_start_event);
+            continue;
+        }
+
         RecursiveLock_Lock(&_pcm_lock_mtx);
         for(size_t i = 0; i < ARRAY_SIZE(_dsp_wave_bufs); ++i) {
             if(_dsp_wave_bufs[i].status != NDSP_WBUF_DONE) {
@@ -198,6 +226,8 @@ static void sink_dma_start(const void *addr, size_t size)
 
     RecursiveLock_Lock(&_pcm_lock_mtx);
     ndspChnSetPaused(0, false);
+    AtomicSet(&_pcm_running, 1);
+    LightEvent_Signal(&_pcm_start_event);
     RecursiveLock_Unlock(&_pcm_lock_mtx);
 }
 
@@ -205,6 +235,7 @@ static void sink_dma_stop(void)
 {
     RecursiveLock_Lock(&_pcm_lock_mtx);
     ndspChnSetPaused(0, true);
+    AtomicSet(&_pcm_running, 0);
     RecursiveLock_Unlock(&_pcm_lock_mtx);
 }
 
@@ -222,6 +253,7 @@ static void sink_dma_init(void)
 
     RecursiveLock_Init(&_pcm_lock_mtx);
     LightEvent_Init(&_dsp_callback_event, RESET_ONESHOT);
+    LightEvent_Init(&_pcm_start_event, RESET_ONESHOT);
 
     /* DSP initial setup */
     ndspChnReset(0);
@@ -282,6 +314,7 @@ void pcm_close_device(void)
     RecursiveLock_Lock(&_pcm_lock_mtx);
     AtomicSet(&_pcm_shutdown, 1);
     LightEvent_Signal(&_dsp_callback_event);
+    LightEvent_Signal(&_pcm_start_event);
 
     threadJoin(_pcm_thread, UINT64_MAX);
     threadFree(_pcm_thread);

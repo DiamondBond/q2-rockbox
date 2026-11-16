@@ -19,9 +19,6 @@
  ****************************************************************************/
 
 #include "gpio-ingenic.h"
-#if defined(EROS_QN)
-# include "devicedata.h"
-#endif
 
 static const struct gpio_setting gpio_settings[PIN_COUNT] INITDATA_ATTR = {
 #define DEFINE_GPIO(_name, _gpio, _func) \
@@ -61,58 +58,29 @@ static const char* const pingroup_names[PINGROUP_COUNT] = {
 
 void gpio_init(void)
 {
-#if defined(EROS_QN)
-    int devicever;
-# if defined(BOOTLOADER)
-    devicever = EROSQN_VER;
-# else
-    devicever = device_data.hw_rev;
-# endif
-#endif
+    /* Keep track of unconfigured pins */
+    uint32_t mask[4] = {0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
+
     /* Apply all initial GPIO settings */
     for(int i = 0; i < PINGROUP_COUNT; ++i) {
         const struct pingroup_setting* d = &pingroup_settings[i];
         if(d->pins != 0)
             gpioz_configure(d->port, d->pins, d->func);
+
+        mask[d->port] &= ~d->pins;
     }
 
     for(int i = 0; i < PIN_COUNT; ++i) {
         const struct gpio_setting* d = &gpio_settings[i];
-
-#ifdef EROS_QN
-// eros_qn only
-        // There surely has to be a nicer way to do this...
-        // Note: PIN_ indicates position in the list,
-        //       GPIO_ indicates actual port/pin number
-        //       (so if you want to go based on order of the list, use the PIN_ designator!)
-        if((d->gpio != GPIO_NONE) &&\
-            ((i < PIN_HW1_START) ||\
-            (devicever <= 3 &&\
-             (i > PIN_HW1_START && i < PIN_HW1_END))\
-            ||\
-            (devicever >= 4 &&\
-              (i > PIN_HW4_START && i < PIN_HW4_END))))
-
-        // if((d->gpio != GPIO_NONE) && (d->gpio != GPIO_BTN_POWER_HW1))
-#else
-        // non-eros_qn devices
         if(d->gpio != GPIO_NONE)
-#endif
-        {
             gpioz_configure(GPION_PORT(d->gpio), GPION_MASK(d->gpio), d->func);
-        }
+
+        mask[GPION_PORT(d->gpio)] &= ~GPION_MASK(d->gpio);
     }
 
-    /* Any GPIO pins left in an IRQ trigger state need to be switched off,
-     * because the drivers won't be ready to handle the interrupts until they
-     * get initialized later in the boot. */
-    for(int i = 0; i < 4; ++i) {
-        uint32_t intbits = REG_GPIO_INT(i);
-        if(intbits) {
-            gpioz_configure(i, intbits, GPIOF_INPUT);
-            jz_clr(GPIO_FLAG(i), intbits);
-        }
-    }
+    /* Set unconfigured pins to hi-z input */
+    for (int i = 0; i < 4; ++i)
+        gpioz_configure(i, mask[i], GPIOF_INPUT);
 }
 
 void gpioz_configure(int port, uint32_t pins, int func)

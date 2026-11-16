@@ -479,13 +479,14 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
          */
         case 0x13:
         {
-            uint32_t lingoes = get_u32(&buf[2]);
-            uint32_t options = get_u32(&buf[6]);
-            uint32_t deviceid = get_u32(&buf[0x0A]);
+            uint32_t lingoes, options, deviceid;
             bool seen_unsupported = false;
             unsigned char i;
 
             CHECKLEN(14);
+            lingoes = get_u32(&buf[2]);
+            options = get_u32(&buf[6]);
+            deviceid = get_u32(&buf[0x0A]);
 
             /* Issuing this command exits any extended interface states */
             iap_interface_state_change(IST_STANDARD);
@@ -545,7 +546,7 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
 
             /* Loop through the lingoes advertised by the device.
              * If it tries to use a lingo we do not support, return
-             * a Command Failed ACK.
+             * a Command Failed ACK, as the iPod Classic firmware does.
              */
             for(i=0; i<32; i++) {
                 if (lingoes & BIT_N(i)) {
@@ -1149,6 +1150,48 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
                 cmd_ok(cmd);
             }
 
+            break;
+        }
+
+        /* GetiPodOptionsForLingo (0x4B)
+         *
+         * Request the features the iPod supports for a lingo
+         *
+         * Packet format (offset in buf[]: Description)
+         * 0x00: Lingo ID: General Lingo, always 0x00
+         * 0x01: Command, always 0x4B
+         * 0x02: Lingo ID to report the options of
+         *
+         * Returns:
+         * RetiPodOptionsForLingo
+         *
+         * Packet format (offset in data[]: Description)
+         * 0x00: Lingo ID: General Lingo, always 0x00
+         * 0x01: Command, always 0x4C
+         * 0x02: Lingo ID
+         * 0x03-0x0A: Option bits, MSB first
+         *
+         * Returns on failure:
+         * IAP_ACK_BAD_PARAM for a lingo the iPod doesn't support
+         */
+        case 0x4B:
+        {
+            CHECKLEN(3);
+
+            if (buf[2] >= 32 || !LINGO_SUPPORTED(buf[2]))
+            {
+                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                break;
+            }
+
+            /* None of the optional features of any lingo are
+             * implemented */
+            IAP_TX_INIT(0x00, 0x4C);
+            IAP_TX_PUT(buf[2]);
+            IAP_TX_PUT_U32(0x00);
+            IAP_TX_PUT_U32(0x00);
+
+            iap_send_tx();
             break;
         }
 

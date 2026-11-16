@@ -23,7 +23,6 @@
 #include "fs_defines.h"
 
 #include <3ds/archive.h>
-#include <3ds/util/utf.h>
 /* this includes a couple of 3ds headers */
 #include "sys_file.h"
 #include "sys_file_internal.h"
@@ -34,6 +33,10 @@
 #include "pathfuncs.h"
 #include "timefuncs.h"
 #include "system.h"
+#include "thread.h"
+#include "settings.h" /* file browser sort order */
+#include "misc.h"     /* get_current_activity() */
+#include "rbunicode.h"
 
 
 /* This file is based on firmware/common/dir.c */
@@ -41,6 +44,7 @@
 /* Define LOGF_ENABLE to enable logf output in this file */
 // #define LOGF_ENABLE
 #include "logf.h"
+#include "sys_fs_async_3ds.h"
 
 /* structure used for open directory streams */
 static struct dirstr_desc
@@ -139,15 +143,17 @@ DIR * console_opendir(const char *dirname)
     filestr_base_init(&dir->stream);
     Result res = FSUSER_OpenDirectory(&dir->stream.handle,
                                       sdmcArchive,
-                                      fsMakePath(PATH_ASCII, dirname));
+                                      FS_PATH(dirname));
     if (R_FAILED(res)) {
+        /* libctru stores a handle even when the call fails */
+        dir->stream.handle = 0;
         logf("Open failed: %lld\n", fs_error());
-        FILE_ERROR(EMFILE, -1);
+        FILE_ERROR(ENOENT, -1);
     }
 
     dir->stream.cache = NewPageReaderDirectory(dir->stream.handle, defaultPageSize);
     if (dir->stream.cache == NULL) {
-        FILE_ERROR(ERRNO, -2);
+        FILE_ERROR(EIO, -2);
     }
 
     dir->stream.size = 0;
@@ -156,14 +162,18 @@ DIR * console_opendir(const char *dirname)
     /* we will use file path to implement console_samedir function */
     strcpy(dir->stream.path, dirname);
 
+    /* the stream keeps the handle open until closedir() */
     dirp = (DIR *)dir;
+    file_internal_unlock_WRITER();
+    return dirp;
+
 file_error:
-    if (dir->stream.handle != 0) {
+    if (dir && dir->stream.handle != 0) {
         FSDIR_Close(dir->stream.handle);
         dir->stream.handle = 0;
     }
     file_internal_unlock_WRITER();
-    return dirp;
+    return NULL;
 }
 
 /* close a directory stream */
@@ -220,11 +230,16 @@ void dirstr_entry_init(FS_DirectoryEntry *dirEntry, struct dirent *entry)
     /* size */
     entry->info.size = dirEntry->fileSize;
 
-    /* name */
-    uint8_t d_name[0xA0 + 1];
-    memset(d_name, '\0', 0xA0);
-    utf16_to_utf8(d_name, (uint16_t *) &dirEntry->name, 0xA0);
-    memcpy(entry->d_name, d_name, 0xA0);
+    /* name: UTF-16LE, NUL terminated. utf16decode() never writes a
+     * partial character */
+    int len16 = 0;
+    while (len16 < (int)ARRAYLEN(dirEntry->name) && dirEntry->name[len16])
+        len16++;
+
+    unsigned char *end = utf16decode((const unsigned char *)dirEntry->name,
+                                     (unsigned char *)entry->d_name, len16,
+                                     sizeof(entry->d_name) - 1, true);
+    *end = '\0';
 }
 
 /* read a directory */
@@ -252,24 +267,9 @@ struct dirent * console_readdir(DIR *dirp)
 
     res = &dir->entry;
     dirstr_entry_init(&dirEntry, res);
-  
-    /* time */
-    char full_path[MAX_PATH+1];
 
-    if (!strcmp(PATH_ROOTSTR, dir->stream.path))
-        snprintf(full_path, MAX_PATH, "%s%s", dir->stream.path, res->d_name);
-    else
-        snprintf(full_path, MAX_PATH, "%s/%s", dir->stream.path, res->d_name);
-
-    u64 mtime;
-    archive_getmtime(full_path, &mtime);
-
-    /* DEBUGF("archive_getmtime(%s): %lld\n", full_path, mtime); */
-
-    uint16_t dosdate, dostime;
-    dostime_localtime(mtime, &dosdate, &dostime);
-    res->info.wrtdate = dosdate;
-    res->info.wrttime = dostime;
+    /* No timestamp here: FS_DirectoryEntry has none, and fetching it costs
+     * one FS request per entry, see console_dir_get_info() */
 
 file_error:
     RELEASE_DIRSTR(READER, dir);
@@ -295,7 +295,7 @@ int console_mkdir(const char *path)
     file_internal_lock_WRITER();
 
     Result res = FSUSER_CreateDirectory(sdmcArchive,
-                                        fsMakePath(PATH_ASCII, path),
+                                        FS_PATH(path),
                                         0);
     if (R_FAILED(res)) {
         if (R_DESCRIPTION(res) == RD_DIRECTORY_ALREADY_EXISTS)
@@ -333,7 +333,7 @@ int console_rmdir(const char *name)
 
     file_internal_lock_WRITER();
     Result res = FSUSER_DeleteDirectory(sdmcArchive,
-                                        fsMakePath(PATH_ASCII, name));
+                                        FS_PATH(name));
     if (R_FAILED(res))
         FILE_ERROR(ERRNO, -1);
 
@@ -367,14 +367,15 @@ int console_samedir(DIR *dirp1, DIR *dirp2)
 /* test directory existence (returns 'false' if a file) */
 bool console_dir_exists(const char *dirname)
 {
-    file_internal_lock_WRITER();
+    /* touches no shared state: don't keep readers waiting during the lookup */
+    file_internal_lock_READER();
 
     int rc;
 
     Handle handle;
     Result res = FSUSER_OpenDirectory(&handle,
                                       sdmcArchive,
-                                      fsMakePath(PATH_ASCII, dirname));
+                                      FS_PATH(dirname));
     if (R_FAILED(res)) {
         logf("Directory not found: %ld\n", fs_error());
         FILE_ERROR(EMFILE, -1);
@@ -385,8 +386,36 @@ file_error:
     if (rc == 0) {
         FSDIR_Close(handle);
     }
-    file_internal_unlock_WRITER();
+    file_internal_unlock_READER();
     return rc == 0 ? true : false;
+}
+
+/* The 3DS FS has no per-entry timestamp: archive_getmtime() is one FS
+ * request per entry, which makes listing big folders very slow. Skip it
+ * for the file browser (UI thread, no plugin running) unless it sorts by
+ * date. Other callers (tagcache, plugins) always get the real date. */
+static unsigned int ui_thread_id;
+static bool ui_thread_known = false;
+
+void sys_dir_set_ui_thread(void)
+{
+    ui_thread_id = thread_self();
+    ui_thread_known = true;
+}
+
+static bool sort_by_date(int sort)
+{
+    return sort == SORT_DATE || sort == SORT_DATE_REVERSED;
+}
+
+static bool dir_mtime_wanted(void)
+{
+    if (!ui_thread_known || thread_self() != ui_thread_id)
+        return true;
+    if (get_current_activity() == ACTIVITY_PLUGIN)
+        return true;
+    return sort_by_date(global_settings.sort_dir) ||
+           sort_by_date(global_settings.sort_file);
 }
 
 /* get the portable info from the native entry */
@@ -401,6 +430,25 @@ struct dirinfo console_dir_get_info(DIR *dirp, struct dirent *entry)
 
     if ((file_size_t)entry->info.size > FILE_SIZE_MAX)
         FILE_ERROR(EOVERFLOW, _RC);
+
+    if (dir_mtime_wanted())
+    {
+        struct dirstr_desc *dir = (struct dirstr_desc *)dirp;
+        char full_path[MAX_PATH+1];
+
+        if (!strcmp(PATH_ROOTSTR, dir->stream.path))
+            snprintf(full_path, MAX_PATH, "%s%s", dir->stream.path, entry->d_name);
+        else
+            snprintf(full_path, MAX_PATH, "%s/%s", dir->stream.path, entry->d_name);
+
+        u64 mtime = 0;
+        archive_getmtime(full_path, &mtime);
+
+        uint16_t dosdate, dostime;
+        dostime_localtime(mtime, &dosdate, &dostime);
+        entry->info.wrtdate = dosdate;
+        entry->info.wrttime = dostime;
+    }
 
     return (struct dirinfo)
     {

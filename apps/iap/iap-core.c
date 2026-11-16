@@ -95,11 +95,25 @@ int iap_repeatbtn = 0;
  * it reaches 0
  */
 unsigned int iap_timeoutbtn = 0;
-bool iap_btnrepeat = false, iap_btnshuffle = false;
+bool iap_btnrepeat = false, iap_btnshuffle = false, iap_btnstop = false;
 /* Set when a session ends while muted, see iap_reset_device() */
 static bool iap_unmute_pending = false;
 /* The user's volume when an accessory muted, see iap_periodic() */
 static int iap_mute_volume;
+/* Consecutive iap_periodic() ticks playback has been stopped for, up
+ * to 2. Playback also stops briefly when a new playlist starts, so a
+ * stop is only notified on the second tick. */
+static int pb_stopped_ticks = 2;
+/* The seek in progress, then the seek stop to notify: 0x02 forward,
+ * 0x03 backward, or 0 */
+static unsigned char pb_seeking = 0;
+static unsigned char pb_seek_stopped = 0;
+/* The shuffle and repeat modes to put back when the accessory detaches,
+ * or -1, see iap_set_shuffle() and iap_set_repeat() */
+static int iap_saved_shuffle = -1;
+static int iap_saved_repeat = -1;
+/* Set when a session ends with saved modes to restore */
+static bool iap_restore_pending = false;
 
 static long thread_stack[(DEFAULT_STACK_SIZE*8)/sizeof(long)];
 static struct event_queue iap_queue;
@@ -370,6 +384,9 @@ void iap_reset_device(struct device_t* device)
     if (device->mute)
         iap_unmute_pending = true;
     device->mute = false;
+    /* Likewise for shuffle and repeat changed with Restore on Exit */
+    if (iap_saved_shuffle >= 0 || iap_saved_repeat >= 0)
+        iap_restore_pending = true;
 
     interface_state = IST_STANDARD;
 
@@ -382,6 +399,9 @@ void iap_reset_device(struct device_t* device)
     iap_repeatbtn = 0;
     iap_btnshuffle = false;
     iap_btnrepeat = false;
+    iap_btnstop = false;
+    pb_seeking = 0;
+    pb_seek_stopped = 0;
 
 #if CONFIG_TUNER
     /* Set again when the next accessory identifies with the RF Tuner
@@ -859,6 +879,7 @@ void iap_get_trackinfo(const unsigned int track, struct mp3entry* id3)
 {
     int tracknum;
     struct playlist_track_info info;
+    struct mp3entry *current = NULL;
 
     tracknum = track;
 
@@ -866,16 +887,149 @@ void iap_get_trackinfo(const unsigned int track, struct mp3entry* id3)
     if(tracknum >= playlist_amount())
         tracknum -= playlist_amount();
 
-    /* If the tracknumber is not the current one,
-       read id3 from disk */
-    if(playlist_get_current()->index != tracknum)
+    /* The playback engine only has the current track's metadata while
+     * playing. When stopped, e.g. right after the saved playlist was
+     * loaded, it is empty and the track would be listed without a name. */
+    if (audio_status() & AUDIO_STATUS_PLAY)
+        current = audio_current_track();
+
+    if (playlist_get_track_info(NULL, tracknum, &info) < 0)
+        info.filename[0] = '\0';
+
+    /* Read the id3 from disk if the track is not the one playing. Right
+     * after a skip, the playlist is at the new track before the playback
+     * engine has switched to it, so compare the files too: an accessory
+     * that asks for the new track's title right away would get the old
+     * one's, and may not ask again. Playback drops leading directories
+     * of a playlist entry that don't exist, so a track that plays may
+     * not be read by the name in the playlist; keep the playing track's
+     * then. */
+    if (current && playlist_get_current()->index == tracknum &&
+        !strcmp(current->path, info.filename))
     {
-        playlist_get_track_info(NULL, tracknum, &info);
-        /* memset(id3, 0, sizeof(*id3)) --get_metadata does this for us */
-        get_metadata(id3, -1, info.filename);
-    } else {
-        memcpy(id3, audio_current_track(), sizeof(*id3));
+        memcpy(id3, current, sizeof(*id3));
     }
+    /* memset(id3, 0, sizeof(*id3)) --get_metadata does this for us */
+    else if (!get_metadata(id3, -1, info.filename))
+    {
+        if (current && playlist_get_current()->index == tracknum)
+            memcpy(id3, current, sizeof(*id3));
+        else
+            strlcpy(id3->path, info.filename, sizeof(id3->path));
+    }
+
+    /* An untagged file, e.g. a voice recording, has no title. The
+     * database lists it by its file name, so send that rather than an
+     * empty title. */
+    if (!id3->title || !id3->title[0])
+    {
+        const char *name = strrchr(id3->path, '/');
+        id3->title = (char *)(name ? name + 1 : id3->path);
+    }
+}
+
+/* Set while the playlist loaded by iap_load_playlist_ui() has not been
+ * started yet */
+static bool resume_playlist_loaded = false;
+/* Loading is only done once per boot: if the saved playlist can't be
+ * loaded, every later database query would wait for it again.
+ * POSTED: the UI thread has been asked to load it, LOADING: it is. */
+enum { RESUME_IDLE, RESUME_POSTED, RESUME_LOADING, RESUME_DONE };
+static volatile int resume_load_state = RESUME_IDLE;
+static long resume_post_tick;
+/* Requests the UI thread didn't take, or loads that failed. After two,
+ * accessories get the answers for an empty playlist again. */
+static int resume_load_failures = 0;
+#define RESUME_MAX_FAILURES 2
+
+static void resume_load_failed(void)
+{
+    resume_load_state = (++resume_load_failures < RESUME_MAX_FAILURES) ?
+                        RESUME_IDLE : RESUME_DONE;
+}
+
+static bool resume_playlist_wanted(void)
+{
+    return playlist_amount() <= 0 &&
+           global_status.resume_index != -1 &&
+           !(audio_status() & AUDIO_STATUS_PLAY);
+}
+
+/* An accessory that powers the iPod up starts browsing before the user
+ * resumed playback, while the current playlist is still empty. It then
+ * finds no tracks and gives up until it is reconnected. Returns true
+ * when the saved playlist would give it something to show and hasn't
+ * been loaded yet, or is still loading.
+ */
+bool iap_resume_playlist_pending(void)
+{
+    if (resume_load_state == RESUME_POSTED ||
+        resume_load_state == RESUME_LOADING)
+        return true;
+    return resume_load_state == RESUME_IDLE && resume_playlist_wanted();
+}
+
+/* Load the saved playlist without starting playback. playlist_resume()
+ * shows splashes and reads the button queue, so it has to run on the UI
+ * thread: ask it to, then wait with iap_wait_resume_playlist().
+ */
+void iap_load_resume_playlist(void)
+{
+    if (resume_load_state != RESUME_IDLE)
+        return;
+    resume_load_state = RESUME_POSTED;
+    resume_post_tick = current_tick;
+    button_queue_post(SYS_IAP_LOAD_PLAYLIST, 0);
+}
+
+/* Wait at most timeout ticks for the load. Returns true once it is done
+ * or has been given up. */
+bool iap_wait_resume_playlist(long timeout)
+{
+    long end = current_tick + timeout;
+
+    while (resume_load_state != RESUME_DONE && TIME_BEFORE(current_tick, end))
+    {
+        /* The screen showing may not pass system events on, as some
+         * plugins don't. Forget a request not taken within 2 s, so that
+         * a late event is ignored. */
+        if (resume_load_state == RESUME_POSTED &&
+            TIME_AFTER(current_tick, resume_post_tick + 2*HZ))
+        {
+            resume_load_failed();
+            break;
+        }
+        sleep(HZ/20);
+    }
+    return resume_load_state == RESUME_DONE;
+}
+
+/* SYS_IAP_LOAD_PLAYLIST, on the UI thread */
+void iap_load_playlist_ui(void)
+{
+    if (resume_load_state != RESUME_POSTED)
+        return;
+    resume_load_state = RESUME_LOADING;
+    /* Check again: the user may have resumed playback meanwhile */
+    if (resume_playlist_wanted())
+    {
+        int result = playlist_resume();
+
+        /* remove the splashes playlist_resume() left on screen; plugins
+         * read buttons themselves and could take this for a key press */
+        if (get_current_activity() != ACTIVITY_PLUGIN)
+            button_queue_post(BUTTON_REDRAW, 0);
+        if (result != -1)
+            resume_playlist_loaded = true;
+        else if (playlist_amount() <= 0)
+        {
+            /* it may load later, for example once a plugin that took
+             * the buffer has exited */
+            resume_load_failed();
+            return;
+        }
+    }
+    resume_load_state = RESUME_DONE;
 }
 
 /* Start playback of the current playlist when stopped, or resume it
@@ -887,12 +1041,24 @@ bool iap_play_or_resume(void)
 
     if (audio_status() & AUDIO_STATUS_PLAY)
     {
+        resume_playlist_loaded = false;
         audio_resume();
         return true;
     }
 
     if (playlist_amount() <= 0)
         return false;
+
+    if (resume_playlist_loaded)
+    {
+        /* continue where the user left off */
+        resume_playlist_loaded = false;
+        playlist_resume_track(global_status.resume_index,
+                              global_status.resume_crc32,
+                              global_status.resume_elapsed,
+                              global_status.resume_offset);
+        return true;
+    }
 
     index = playlist_get_current()->index;
     playlist_start(index >= 0 ? index : 0, 0, 0);
@@ -903,6 +1069,7 @@ bool iap_play_or_resume(void)
  * timeout releases it should the accessory never end the seek */
 void iap_seek_start(bool forward)
 {
+    pb_seeking = forward ? 0x02 : 0x03;
     iap_remotebtn = forward ? BUTTON_RC_RIGHT : BUTTON_RC_LEFT;
     iap_repeatbtn = 2;
     iap_timeoutbtn = IAP_SEEK_TIMEOUT;
@@ -913,10 +1080,23 @@ void iap_seek_stop(void)
     if (iap_timeoutbtn == 0)
         return;
 
+    pb_seek_stopped = pb_seeking;
+    pb_seeking = 0;
+
     /* Let the button driver see the release before the next packet */
     iap_remotebtn = BUTTON_NONE;
     iap_repeatbtn = 2;
     iap_timeoutbtn = 0;
+}
+
+/* 1 while a seek forward is held, -1 back, 0 for none */
+int iap_seek_dir(void)
+{
+    if (pb_seeking == 0x02)
+        return 1;
+    if (pb_seeking == 0x03)
+        return -1;
+    return 0;
 }
 
 uint32_t iap_get_trackpos(void)
@@ -941,6 +1121,147 @@ uint32_t iap_get_trackindex(void)
     return index;
 }
 
+/* PlayStatusChangeNotification without extra data */
+static void send_play_status(unsigned char status)
+{
+    IAP_TX_INIT4(0x04, 0x0027);
+    IAP_TX_PUT(status);
+
+    iap_send_tx();
+}
+
+static void apply_shuffle(bool shuffle)
+{
+    if (global_settings.playlist_shuffle == shuffle)
+        return;
+
+    global_settings.playlist_shuffle = shuffle;
+    /* A loaded playlist is saved in its play order, so reorder it even
+     * while stopped. Audio is only reloaded while playing. */
+    if (playlist_amount() > 0)
+    {
+        if (shuffle)
+            playlist_randomise(NULL, current_tick, true);
+        else
+            playlist_sort(NULL, true);
+    }
+}
+
+static void apply_repeat(int mode)
+{
+    if (global_settings.repeat_mode == mode)
+        return;
+
+    global_settings.repeat_mode = mode;
+    if (audio_status() & AUDIO_STATUS_PLAY)
+        audio_flush_and_reload_tracks();
+}
+
+/* Put back the shuffle and repeat modes an accessory changed with the
+ * Restore on Exit byte set, once it is gone */
+static void iap_restore_modes(void)
+{
+    if (!iap_restore_pending)
+        return;
+
+    iap_restore_pending = false;
+    if (iap_saved_shuffle < 0 && iap_saved_repeat < 0)
+        return;
+    if (iap_saved_shuffle >= 0)
+        apply_shuffle(iap_saved_shuffle);
+    if (iap_saved_repeat >= 0)
+        apply_repeat(iap_saved_repeat);
+    iap_saved_shuffle = -1;
+    iap_saved_repeat = -1;
+    /* Anything that saved the settings meanwhile wrote the accessory's
+     * modes to disk */
+    settings_save();
+}
+
+/* Set once the modes are final for this power cycle */
+static bool iap_modes_final = false;
+
+/* Called at shutdown on the UI thread, after playback stopped: keep the
+ * modes an accessory changed with Restore on Exit off disk. With
+ * save_playlist false, the playlist won't be saved and isn't reordered.
+ */
+void iap_prepare_shutdown(bool save_playlist)
+{
+    iap_modes_final = true;
+    if (!save_playlist)
+    {
+        if (iap_saved_shuffle >= 0)
+            global_settings.playlist_shuffle = iap_saved_shuffle;
+    }
+    else if (iap_saved_shuffle >= 0 &&
+             iap_saved_shuffle != global_settings.playlist_shuffle)
+    {
+        apply_shuffle(iap_saved_shuffle);
+        /* resume from the track's position in the new order */
+        if (global_status.resume_index != -1 && playlist_amount() > 0)
+            global_status.resume_index = playlist_get_current()->index;
+    }
+    if (iap_saved_repeat >= 0)
+        global_settings.repeat_mode = iap_saved_repeat;
+    iap_saved_shuffle = -1;
+    iap_saved_repeat = -1;
+}
+
+/* SetShuffle. With restore set, the change lasts until the accessory
+ * detaches and isn't saved; otherwise it is kept like a change made on
+ * the iPod. */
+void iap_set_shuffle(bool shuffle, bool restore)
+{
+    if (iap_modes_final)
+        return;
+    /* finish restoring for a previous session first */
+    iap_restore_modes();
+
+    if (restore)
+    {
+        if (iap_saved_shuffle < 0)
+            iap_saved_shuffle = global_settings.playlist_shuffle;
+        apply_shuffle(shuffle);
+    }
+    else
+    {
+        bool was_temporary = iap_saved_shuffle >= 0;
+
+        iap_saved_shuffle = -1;
+        if (was_temporary || global_settings.playlist_shuffle != shuffle)
+        {
+            apply_shuffle(shuffle);
+            settings_save();
+        }
+    }
+}
+
+/* SetRepeat, see iap_set_shuffle() */
+void iap_set_repeat(int mode, bool restore)
+{
+    if (iap_modes_final)
+        return;
+    iap_restore_modes();
+
+    if (restore)
+    {
+        if (iap_saved_repeat < 0)
+            iap_saved_repeat = global_settings.repeat_mode;
+        apply_repeat(mode);
+    }
+    else
+    {
+        bool was_temporary = iap_saved_repeat >= 0;
+
+        iap_saved_repeat = -1;
+        if (was_temporary || global_settings.repeat_mode != mode)
+        {
+            apply_repeat(mode);
+            settings_save();
+        }
+    }
+}
+
 void iap_periodic(void)
 {
     static int count;
@@ -959,6 +1280,8 @@ void iap_periodic(void)
      * an accessory's mute. The volume notification reports it. */
     if (device.mute && (global_status.volume != iap_mute_volume))
         device.mute = false;
+
+    iap_restore_modes();
 
     /* Handle pending authentication tasks */
     switch (device.auth.state)
@@ -1003,10 +1326,17 @@ void iap_periodic(void)
 
     if (!iap_timeoutbtn)
     {
+        /* a seek the accessory never ended has been released */
+        if (pb_seeking)
+        {
+            pb_seek_stopped = pb_seeking;
+            pb_seeking = 0;
+        }
         iap_remotebtn = BUTTON_NONE;
         iap_repeatbtn = 0;
         iap_btnshuffle = false;
         iap_btnrepeat = false;
+        iap_btnstop = false;
     }
 
     /* Handle power down messages. This is a one-shot event: a shutdown
@@ -1115,6 +1445,26 @@ void iap_periodic(void)
     }
 
     /* Extended Interface PlayStatusChangeNotification */
+    {
+        bool stopped = !(audio_status() & AUDIO_STATUS_PLAY);
+        bool basic = (interface_state == IST_EXTENDED) &&
+                     (device.pb_notifications & BIT_N(0));
+
+        /* Playback stopped */
+        if (!stopped)
+            pb_stopped_ticks = 0;
+        else if (pb_stopped_ticks < 2 && ++pb_stopped_ticks == 2 && basic)
+            send_play_status(0x00);
+
+        /* Playback forward or backward seek stop */
+        if (pb_seek_stopped)
+        {
+            if (basic)
+                send_play_status(pb_seek_stopped);
+            pb_seek_stopped = 0;
+        }
+    }
+
     if (device.pb_track_changed)
     {
         device.pb_track_changed = false;
@@ -1317,23 +1667,14 @@ void iap_periodic(void)
             iap_send_tx();
 
             device.play_status = play_status;
-			if (play_status != 1) {
-			/* Not Playing */
-			   audio_pause();
 #if CONFIG_TUNER
-               if (radio_present==1) {
-                  tuner_set(RADIO_MUTE,1);
-			   }
+            /* Mute the radio of an Apple Radio Remote while playback
+             * isn't running. Only follow the play state: pausing or
+             * resuming here would at best repeat the change just seen,
+             * and would undo a change made since it was read. */
+            if (radio_present == 1)
+                tuner_set(RADIO_MUTE, play_status != AUDIO_STATUS_PLAY);
 #endif
-			} else {
-			/* Playing */
-			   audio_resume();
-#if CONFIG_TUNER
-			   if (radio_present==1) {
-                   tuner_set(RADIO_MUTE,0);
-               }
-#endif
-			}
         }
     }
 
@@ -1526,6 +1867,12 @@ void iap_periodic(void)
  */
 void iap_interface_state_change(const enum interface_state new)
 {
+    /* Settings changed with Restore on Exit last until the accessory
+     * leaves the Extended Interface */
+    if (interface_state == IST_EXTENDED && new != IST_EXTENDED &&
+        (iap_saved_shuffle >= 0 || iap_saved_repeat >= 0))
+        iap_restore_pending = true;
+
     if (((interface_state == IST_EXTENDED) && (new == IST_STANDARD)) ||
         ((interface_state == IST_STANDARD) && (new == IST_EXTENDED))) {
         /* Pause the engine directly: outside the WPS a synthetic Play

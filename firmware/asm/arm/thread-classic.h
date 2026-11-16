@@ -26,12 +26,18 @@ struct regs
     uint32_t sp;    /*    32 - Stack pointer (r13) */
     uint32_t lr;    /*    36 - r14 (lr) */
     uint32_t start; /*    40 - Thread start address, or NULL when started */
+#ifdef __ARM_PCS_VFP
+    uint64_t d[8];  /* 48-104 - Registers d8-d15 (callee-saved, hard-float) */
+#endif
 };
 
 #if (CONFIG_PLATFORM & PLATFORM_HOSTED)
   #include <errno.h>
 #if defined(DX50) || defined (DX90)
   #define DEFAULT_STACK_SIZE 0x2000 /* Bytes */
+#elif defined(N3DS)
+  /* Threads call into newlib and libctru, give them room */
+  #define DEFAULT_STACK_SIZE 0x4000 /* Bytes */
 #else
   #define DEFAULT_STACK_SIZE 0x1000 /* Bytes */
 #endif

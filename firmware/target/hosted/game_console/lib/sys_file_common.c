@@ -187,8 +187,9 @@ ssize_t readwrite(struct filestr_desc *file, void *buf, size_t nbyte,
                                   AtomicGet(&file->offset));
     }
 
+    /* n_err.n holds the bytes transferred, also on error */
     if ((n_err.err != NULL) && strcmp(n_err.err, "io.EOF")) {
-        FILE_ERROR(ERRNO, -3); 
+        FILE_ERROR(EIO, -3);
     }
 
 file_error:;
@@ -222,7 +223,7 @@ void filestr_base_init(struct filestr_base *stream)
     stream->cache = NULL;
     stream->handle = 0;
     stream->size = 0;
-    sys_mutex_init(&stream->mtx);
+    filestr_mutex_init(&stream->mtx);
 }
 
 int open_internal_inner1(const char *path, int oflag);
@@ -238,9 +239,11 @@ int console_open(const char *path, int oflag, ...)
 {
     logf("open(path=\"%s\",oflag=%X)\n", path, (unsigned)oflag);
 
+#ifndef N3DS
     /* we need to wait a little here when playing a folder with many small files
        to prevent other threads starvation */
     sleep(10);
+#endif /* N3DS: FS I/O runs on a worker thread, see sys_fs_async_3ds.c */
 
     return open_internal_locked(path, oflag);
 }
@@ -279,7 +282,7 @@ ssize_t console_read(int fildes, void *buf, size_t nbyte)
 
     ssize_t rc;
 
-    if (file->stream.flags & O_WRONLY)
+    if ((file->stream.flags & O_ACCMODE) == O_WRONLY)
     {
         logf("read(fd=%d,buf=%p,nb=%lu) - "
                "descriptor is write-only mode\n",
@@ -305,7 +308,7 @@ ssize_t console_write(int fildes, const void *buf, size_t nbyte)
 
     ssize_t rc;
 
-    if (file->stream.flags & O_RDONLY)
+    if ((file->stream.flags & O_ACCMODE) == O_RDONLY) /* O_RDONLY is 0 */
     {
         logf("write(fd=%d,buf=%p,nb=%lu) - "
                "descriptor is read-only mode\n",
@@ -377,8 +380,17 @@ int console_relate(const char *path1, const char *path2)
 int test_stream_exists_internal(const char *path);
 bool console_file_exists(const char *path)
 {
+#ifdef N3DS
+    /* Touches no shared state, and the FS lookups are slow: as a writer this
+     * keeps readdir() waiting, which stalls the UI while the audio thread
+     * searches for album art. */
+    file_internal_lock_READER();
+    bool rc = test_stream_exists_internal(path) > 0;
+    file_internal_unlock_READER();
+#else
     file_internal_lock_WRITER();
     bool rc = test_stream_exists_internal(path) > 0;
     file_internal_unlock_WRITER();
+#endif
     return rc;
 }
