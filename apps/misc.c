@@ -665,9 +665,13 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
 #ifdef SHANLING_Q2
     /* The Q2 wheel's dark-screen gesture arrives as multimedia volume keys.
      * Advanced Key Lock with "Exempt Volume" off keeps the pocket gesture
-     * from changing the volume, the same way it filters wheel actions. */
-    if ((event & (BUTTON_MULTIMEDIA_VOLUME_UP |
-                  BUTTON_MULTIMEDIA_VOLUME_DOWN)) &&
+     * from changing the volume, the same way it filters wheel actions.
+     * Exactly those two: their BUTTON_MULTIMEDIA bit is in every multimedia
+     * key (the side keys' skips, a headset's buttons) and in the class bits
+     * of some system events. */
+    long volume_event = event & ~BUTTON_REPEAT;
+    if ((volume_event == BUTTON_MULTIMEDIA_VOLUME_UP ||
+         volume_event == BUTTON_MULTIMEDIA_VOLUME_DOWN) &&
         global_settings.bt_selective_softlock_actions &&
         !(global_settings.bt_selective_softlock_actions_mask &
           SEL_ACTION_VOL))
