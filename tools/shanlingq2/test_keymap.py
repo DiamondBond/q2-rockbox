@@ -148,6 +148,9 @@ int main(void)
     expect("quickscreen Next", CONTEXT_QUICKSCREEN, BUTTON_RIGHT, BUTTON_NONE, ACTION_QS_RIGHT);
     for (int k = 0; k < 2; k++)
         expect("quickscreen tap release", CONTEXT_QUICKSCREEN, keys[k]|BUTTON_REL, keys[k], ACTION_NONE);
+    /* Return changes the top setting and stays on the screen */
+    expect("quickscreen Return", CONTEXT_QUICKSCREEN, BUTTON_MENU, BUTTON_NONE, ACTION_QS_TOP);
+    expect("quickscreen Return release", CONTEXT_QUICKSCREEN, BUTTON_MENU|BUTTON_REL, BUTTON_MENU, ACTION_NONE);
 
     /* Yes/no: any other action answers no, so a side key neither skips nor
      * answers; the centre is yes, Play and Return no */

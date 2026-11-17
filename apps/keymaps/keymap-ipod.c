@@ -161,6 +161,11 @@ static const struct button_mapping button_context_quickscreen[]  = {
     { ACTION_QS_RIGHT,      BUTTON_RIGHT,                   BUTTON_NONE },
     { ACTION_QS_RIGHT,      BUTTON_RIGHT|BUTTON_REPEAT,     BUTTON_NONE },
     Q2_SIDE_KEYS_NO_SKIP
+#ifdef SHANLING_Q2
+    /* Return's press changes the top setting: its release must not also
+     * close the screen through button_context_standard's back */
+    { ACTION_NONE,          BUTTON_MENU|BUTTON_REL,         BUTTON_MENU },
+#endif
     { ACTION_STD_CANCEL,    BUTTON_SELECT|BUTTON_REL,       BUTTON_SELECT },
     { ACTION_QS_VOLDOWN,   BUTTON_SCROLL_BACK,                 BUTTON_NONE },
     { ACTION_QS_VOLDOWN,   BUTTON_SCROLL_BACK|BUTTON_REPEAT,   BUTTON_NONE },
