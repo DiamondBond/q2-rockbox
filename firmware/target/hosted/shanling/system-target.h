@@ -25,7 +25,7 @@
 
 #define NEED_GENERIC_BYTESWAPS
 
-/* power_off() returns to the launcher; 0x51 also makes Q2 Pod the default */
+/* "Boot stock OS": power_off() returns to the launcher with 0x51, not 0 */
 extern bool q2_boot_stock;
 
 /* Q2 Pod's Key Tone, on the Q2's speaker (keytone-q2.c) */

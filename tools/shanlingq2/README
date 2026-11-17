@@ -53,9 +53,11 @@ Launcher contract (kept for the q2-pod boot hook)
 -------------------------------------------------
 S90play waits up to 3 s for /tmp/mmc_add (the card mounts asynchronously),
 runs /mnt/mmc/.rockbox/rockbox from that directory with stdout and stderr in
-rockbox.log there, appends "exit N", then execs /release/bin/demo. Exit 0x51
-means "boot the stock player"; the dev loader does that after any exit. Rockbox
-runs without demo's watchdog (checkappprocess.sh, started by demo) and without
+rockbox.log there, appends "exit N", then execs /release/bin/demo: any exit
+starts the stock player (q2-pod's docs/boot.md, Rockbox), the dev loader's too.
+N says why: 0 a shutdown, 0x51 (81) "Boot stock OS" or Return held at
+power-on, 1 a reboot (after a crash's panic screen, a failed card mount or a
+Reboot shortcut; system-hosted.c). Rockbox runs without demo's watchdog (checkappprocess.sh, started by demo) and without
 hciplayer (started by demo), so ALSA is free. A Rockbox that hangs keeps the
 stock UI away until the binary is removed with a card reader.
 
@@ -200,6 +202,7 @@ Run from the repository root:
     python3 tools/shanlingq2/test_doom.py
     python3 tools/shanlingq2/test_keytone.py
     python3 tools/shanlingq2/test_keymap.py
+    python3 tools/shanlingq2/test_launcher.py
     cc tools/shanlingq2/test_wheel.c -o /tmp/q2-wheel && /tmp/q2-wheel
 
 These exercise actual C functions with mocked hardware/ALSA boundaries. The

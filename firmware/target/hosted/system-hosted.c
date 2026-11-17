@@ -90,18 +90,28 @@ static void sig_handler(int sig, siginfo_t *siginfo, void *context)
     }
 }
 
-void power_off(void)
-{
 #ifdef SHANLING_Q2
-    /* Back to the launcher, which starts the stock player. Powering the device
-     * off from here needs stock's into_poweroff (MCU and PMIC); /sbin/poweroff
-     * alone leaves the screen blank and the device has to be reset. "Boot
-     * stock OS" (0x51) makes Q2 Pod the default, a plain shutdown keeps
-     * Rockbox. The screen is left on for Q2 Pod, as at boot. */
+/* Rockbox runs under Q2 Pod's boot hook, which starts Q2 Pod for the session
+ * after any exit and appends the status to rockbox.log; the next power-on
+ * follows its Boot to choice (q2-pod's docs/boot.md, Rockbox). Powering the
+ * device off from here needs stock's into_poweroff (MCU and PMIC):
+ * /sbin/poweroff alone left the screen blank and the device had to be reset.
+ * /sbin/reboot is untried, and the generic code turns the backlight off first.
+ * The screen is left on for Q2 Pod, as at boot. */
+static void q2_exit_to_launcher(int status)
+{
     backlight_hw_on();
     button_close_device();
     sync();
-    _exit(q2_boot_stock ? 0x51 : 0);
+    _exit(status);
+}
+#endif
+
+void power_off(void)
+{
+#ifdef SHANLING_Q2
+    /* 0x51: "Boot stock OS"; 0: a shutdown */
+    q2_exit_to_launcher(q2_boot_stock ? 0x51 : 0);
 #endif
     backlight_hw_off();
     button_close_device();
@@ -135,6 +145,11 @@ void system_init(void)
 
 void system_reboot(void)
 {
+#ifdef SHANLING_Q2
+    /* After a crash's panic screen, a failed card mount or a Reboot shortcut:
+     * Q2 Pod for the session, as for a shutdown; "exit 1" in rockbox.log */
+    q2_exit_to_launcher(1);
+#endif
     backlight_hw_off();
     system("/sbin/reboot");
     while (1) {
