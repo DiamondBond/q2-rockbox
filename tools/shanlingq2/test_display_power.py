@@ -103,11 +103,12 @@ int main(void) {
 #define POWER_INPUT_NONE 0
 #define TIME_AFTER(a,b) ((long)(b) - (long)(a) < 0)
 #define TIME_BEFORE(a,b) TIME_AFTER(b,a)
+#define ARRAYLEN(a) (sizeof(a)/sizeof((a)[0]))
 static long current_tick;
-static unsigned reads, gauge_reads, jack_reads, jack_setups;
-static bool read_ok = true;
+static unsigned reads, gauge_reads, pmic_reads, jack_reads, jack_setups;
+static bool read_ok = true, pmic_ok;
 static const char *status = "Charging";
-static int capacity = 75;
+static int capacity = 75, pmic_capacity = 64;
 static const char *jack = "";
 static int mock_open(const char *p, int flags) { (void)p; (void)flags; return 7; }
 static int mock_ioctl(int fd, unsigned long request, const void *arg);
@@ -131,7 +132,11 @@ bool sysfs_get_string(const char *p, char *out, int n) {
     (void)p; reads++; strncpy(out, status, n); return read_ok;
 }
 bool sysfs_get_int(const char *p, int *v) {
-    (void)p; gauge_reads++; *v = capacity; return read_ok;
+    if (!strcmp(p, "/sys/class/power_supply/battery/capacity")) { /* the AXP2101's */
+        pmic_reads++; *v = pmic_capacity; return pmic_ok;
+    }
+    assert(!strcmp(p, "/sys/devices/i2c-0/0-0062/cw2015_capacity"));
+    gauge_reads++; *v = capacity; return read_ok;
 }
 int main(void) {
     /* The jacks: the first call configures both pins, then reads, at tick 0 too,
@@ -166,6 +171,9 @@ int main(void) {
     capacity = 30; current_tick = LONG_MAX; assert(_battery_level() == 20);
     current_tick = LONG_MIN + 9 * HZ - 2; assert(_battery_level() == 20);
     current_tick++; assert(_battery_level() == 30);
+    /* The AXP2101 only while the gauge had never read (the first call), and
+     * absent there, as on the Q2 this was written on */
+    assert(pmic_reads == 1);
     current_tick = 0;
     assert(charging_state() && power_input_status() == POWER_INPUT_USB_CHARGER);
     assert(reads == 1); /* startup samples immediately; callers share the result */
@@ -186,7 +194,25 @@ int main(void) {
     return 0;
 }
 '''
-    for name, source in (('display', display), ('power', power)):
+    # A fresh start without the gauge's driver: the AXP2101's capacity
+    fallback = power[:power.index('int main(void) {')] + r'''
+int main(void) {
+    read_ok = false;
+    assert(_battery_level() == -1 && gauge_reads == 1 && pmic_reads == 1);
+    /* a bad reading waits for the next, as the gauge's */
+    pmic_ok = true; pmic_capacity = 101;
+    assert(_battery_level() == -1 && gauge_reads == 2 && pmic_reads == 2);
+    pmic_capacity = 64;
+    assert(_battery_level() == 64 && gauge_reads == 3 && pmic_reads == 3);
+    /* kept from then on: a gauge that turns up later doesn't swap the scale */
+    current_tick += 10 * HZ; read_ok = true; pmic_capacity = 63;
+    assert(_battery_level() == 63 && gauge_reads == 3 && pmic_reads == 4);
+    current_tick += 10 * HZ; pmic_ok = false;
+    assert(_battery_level() == 63 && gauge_reads == 3 && pmic_reads == 5);
+    return 0;
+}
+'''
+    for name, source in (('display', display), ('power', power), ('fallback', fallback)):
         src, exe = tmp / (name + '.c'), tmp / name
         src.write_text(source)
         # -fno-strict-overflow as the firmware: TIME_AFTER relies on it at wrap
@@ -195,4 +221,4 @@ int main(void) {
                         '-fno-strict-overflow', '-I', str(tmp), '-I', str(root), '-I',
                         str(root / 'firmware/target/hosted'), str(src), '-o', str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
-print('Q2 rotation/pages/pan failure/clipping/wake/blank off-thread, battery errors/charger, jack and gauge caches/full: OK')
+print('Q2 rotation/pages/pan failure/clipping/wake/blank off-thread, battery errors/charger, jack and gauge caches/full, gauge fallback: OK')

@@ -18,9 +18,9 @@
  *
  ****************************************************************************/
 
-/* Charging from the AXP2101 PMIC, the level from the cw2015 gauge (the PMIC's
- * power_supply has no capacity on the Q2). For USB storage, shut down to the
- * stock player: dwc2's pc_link stays 0 until it sets up the gadget. */
+/* Charging from the AXP2101 PMIC, the level from the cw2015 gauge. For USB
+ * storage, shut down to the stock player: dwc2's pc_link stays 0 until it sets
+ * up the gadget. */
 #include <fcntl.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -57,18 +57,42 @@ bool charging_state(void)
     return charging;
 }
 
+/* The level: the cw2015 gauge's, which stock reads (the Q2 has the one; demo's
+ * other power paths are for the Shanling players that share it, q2-pod's
+ * docs/internals.md, Charge Limit). If that can't be read at all, its driver
+ * not loaded, the AXP2101's own estimate, which q2-pod's docs/hardware.md
+ * lists; the Q2 this was first written on showed none, and then the level
+ * stays unknown. */
+static const char *const level_paths[] = {
+    "/sys/devices/i2c-0/0-0062/cw2015_capacity",
+    "/sys/class/power_supply/battery/capacity",
+};
+
 int _battery_level(void)
 {
     static int last_level = -1;
+    static int source = -1; /* the path last_level came from */
     static long last_tick;
     int level;
     /* powermgmt asks twice a second; the gauge moves far slower */
-    if (last_level < 0 ||
-        (unsigned long)current_tick - (unsigned long)last_tick >= 10 * HZ) {
-        last_tick = current_tick;
-        if (sysfs_get_int("/sys/devices/i2c-0/0-0062/cw2015_capacity", &level) &&
-            level >= 0 && level <= 100)
+    if (last_level >= 0 &&
+        (unsigned long)current_tick - (unsigned long)last_tick < 10 * HZ)
+        return last_level;
+    last_tick = current_tick;
+    if (source >= 0) {
+        /* kept through errors, and never swapped for the other's scale */
+        if (sysfs_get_int(level_paths[source], &level) && level >= 0 && level <= 100)
             last_level = level;
+        return last_level;
+    }
+    for (unsigned i = 0; i < ARRAYLEN(level_paths); i++) {
+        if (!sysfs_get_int(level_paths[i], &level))
+            continue; /* not there: the next */
+        if (level >= 0 && level <= 100) {
+            last_level = level;
+            source = i;
+        }
+        break; /* there: a bad reading waits for the next call */
     }
     return last_level;
 }

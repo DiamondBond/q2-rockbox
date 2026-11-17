@@ -177,8 +177,11 @@ Power off: into_poweroff stops playback, DAC power 0, GPIO PC20 = 0 and PE22 =
 Battery: /sys/class/power_supply/battery is the AXP2101 PMIC (I2C bus 6);
 status reads "Charging". The cw2015 gauge is on I2C bus 0:
 /sys/devices/i2c-0/0-0062/cw2015_capacity (percent) and cw2015_voltage (mV)
-read 100 and 4346 on the charger; there is no cw2015_status (demo also probes
-other board revisions' paths). USB: dwc2 gadget,
+read 100 and 4346 on the charger; there is no cw2015_status. demo's other
+power paths (bq25890_1_*) are for the Shanling players that share it (q2-pod's
+docs/internals.md, Charge Limit). If cw2015_capacity can't be read at all,
+power-q2.c takes the battery supply's capacity, which q2-pod's
+docs/hardware.md lists for the AXP2101. USB: dwc2 gadget,
 /sys/module/dwc2/parameters/pc_link reads 1 with a PC attached
 (check_usb_status, toolsGetpclinkStatus 0x5bf310), but only once stock has
 set up the gadget: under Rockbox it stays 0. /sys/class/backlight is empty, as
