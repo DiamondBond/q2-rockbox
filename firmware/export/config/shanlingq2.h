@@ -115,10 +115,11 @@
 /* We don't have hardware controls */
 #define HAVE_SW_TONE_CONTROLS
 
-/* Battery */
-#define BATTERY_CAPACITY_DEFAULT 1500 /* default battery capacity */
-#define BATTERY_CAPACITY_MIN 1500  /* min. capacity selectable */
-#define BATTERY_CAPACITY_MAX 1500 /* max. capacity selectable */
+/* Battery: the 1850 mAh cell of Shanling's specification (q2-pod's
+ * docs/hardware.md), not the AXP2101 driver's energy_full_design (4000) */
+#define BATTERY_CAPACITY_DEFAULT 1850 /* default battery capacity */
+#define BATTERY_CAPACITY_MIN 1850  /* min. capacity selectable */
+#define BATTERY_CAPACITY_MAX 1850 /* max. capacity selectable */
 #define BATTERY_CAPACITY_INC 0   /* capacity increment */
 
 /* ROLO */
