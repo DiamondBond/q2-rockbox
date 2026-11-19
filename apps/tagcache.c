@@ -4092,6 +4092,49 @@ bool tagcache_create_changelog(struct tagcache_search *tcs)
     return true;
 }
 
+#ifdef SHANLING_Q2
+/* Counts, into in_use[], the live entries that share each of myidx's string
+ * tags. delete_entry() needs this for every entry it deletes, and a scan
+ * deletes one for each changed file it re-adds. Read one entry at a time with
+ * no yield, as the generic loop does, the Q2 (no RAM cache, threads that take
+ * turns) stopped for the whole pass, about 40 ms with 24,000 entries, and a
+ * library whose tags were edited stopped it for minutes. This reads the index
+ * in blocks and lets the other threads run between them. Only the tagcache
+ * thread deletes entries, so one static block is enough. */
+static bool q2_count_tags_in_use(int masterfd, long entry_count,
+                                 const struct index_entry *myidx, int *in_use)
+{
+    static struct index_entry block[64];
+    long i = 0;
+
+    lseek(masterfd, sizeof(struct master_header), SEEK_SET);
+    while (i < entry_count)
+    {
+        int n = MIN(entry_count - i, (long)ARRAYLEN(block));
+        if (read_index_entries(masterfd, block, n) !=
+            (ssize_t)(n * sizeof(struct index_entry)))
+            return false;
+
+        for (int j = 0; j < n; j++)
+        {
+            if (block[j].flag & FLAG_DELETED)
+                continue;
+            for (int tag = 0; tag < TAG_COUNT; tag++)
+            {
+                if (!TAGCACHE_IS_NUMERIC(tag) &&
+                    block[j].tag_seek[tag] == myidx->tag_seek[tag])
+                    in_use[tag]++;
+            }
+        }
+
+        i += n;
+        yield();
+    }
+
+    return true;
+}
+#endif /* SHANLING_Q2 */
+
 static bool delete_entry(long idx_id)
 {
     int fd = -1;
@@ -4137,6 +4180,23 @@ static bool delete_entry(long idx_id)
     for (tag = 0; tag < TAG_COUNT; tag++)
         in_use[tag] = 0;
 
+#ifdef SHANLING_Q2
+    bool counted = false;
+#ifdef HAVE_TC_RAMCACHE
+    if (!tc_stat.ramcache)
+#endif
+    {
+        if (!q2_count_tags_in_use(masterfd, myhdr.tch.entry_count, &myidx, in_use))
+        {
+            logf("delete_entry(): read error #2");
+            goto cleanup;
+        }
+        counted = true;
+    }
+
+    if (!counted)
+    {
+#endif /* SHANLING_Q2 */
     lseek(masterfd, sizeof(struct master_header), SEEK_SET);
     for (i = 0; i < myhdr.tch.entry_count; i++)
     {
@@ -4169,6 +4229,9 @@ static bool delete_entry(long idx_id)
                 in_use[tag]++;
         }
     }
+#ifdef SHANLING_Q2
+    }
+#endif
 
     /* Now delete all tags no longer in use. */
     for (tag = 0; tag < TAG_COUNT; tag++)
