@@ -47,18 +47,53 @@ static bool is_device(int d, const char *name)
     return d == AVRCP ? strstr(name, names[d]) != NULL : !strcmp(name, names[d]);
 }
 
+/* The first of keys, wheel and headset still to find that name is, or NDEV */
+static int wanted(const char *name)
+{
+    int d = 0;
+    while (d < NDEV && (fds[d].fd >= 0 || !is_device(d, name)))
+        d++;
+    return d;
+}
+
+/* An input node's name from sysfs, without opening the node: closing one waits
+ * out an RCU grace period in evdev's release, tens of ms each on the Q2. The
+ * rescan below runs on the tick thread, and with Bluetooth up and no headset it
+ * opened and closed every node each second, stopping Rockbox's clock for about
+ * half a second each time. */
+static bool node_name(int i, char *name, size_t size)
+{
+    char path[48];
+    snprintf(path, sizeof path, "/sys/class/input/event%d/device/name", i);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return false;
+    ssize_t n = read(fd, name, size - 1);
+    close(fd);
+    if (n <= 0)
+        return false;
+    name[n] = '\0';
+    name[strcspn(name, "\n")] = '\0';
+    return true;
+}
+
+/* Names up to uinput's 80 bytes: BlueZ keeps " (AVRCP)" at the end of a long
+ * one, which a 64-byte read cut off. A node sysfs can't name is opened to ask,
+ * as before; the open one is asked again, in case it changed in between. */
 static void open_devices(void)
 {
     for (int i = 0; i < 16; i++) {
-        char path[32], name[64] = "";
+        char path[32], name[96];
+        if (node_name(i, name, sizeof name) && wanted(name) == NDEV)
+            continue;
         snprintf(path, sizeof path, "/dev/input/event%d", i);
         int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (fd < 0)
             continue;
+        name[0] = '\0';
         ioctl(fd, EVIOCGNAME(sizeof name - 1), name);
-        int d = 0;
-        while (d < NDEV && (fds[d].fd >= 0 || !is_device(d, name)))
-            d++;
+        name[sizeof name - 1] = '\0';
+        int d = wanted(name);
         if (d == NDEV) {
             close(fd);
             continue;
