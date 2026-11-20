@@ -3369,6 +3369,40 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
     return 1;
 }
 
+#ifdef SHANLING_Q2
+/* Bytes the commit may take: a quarter of what Linux reports as available,
+ * at most 16 MB, or 0 below 4 MB or when unknown. Linux grants a large
+ * malloc() whether or not it can back it, so malloc() succeeding proves
+ * nothing; running short partway through would get Rockbox killed. */
+/* The title index takes about 80 bytes an entry at 30-character titles and
+ * 125 at 60: half as much again */
+#define Q2_COMMIT_ENTRY_BYTES 192
+static size_t q2_commit_buffer_size(long entries)
+{
+    long avail_kb = -1;
+    char line[96];
+    FILE *fp = fopen("/proc/meminfo", "r");
+    if (!fp)
+        return 0;
+    while (fgets(line, sizeof(line), fp))
+    {
+        if (sscanf(line, "MemAvailable: %ld kB", &avail_kb) == 1)
+            break;
+    }
+    fclose(fp);
+
+    if (avail_kb <= 0)
+        return 0;
+    size_t size = MIN((size_t)avail_kb / 4, (size_t)16 << 10) << 10;
+    /* A buffer too small for the database fails the commit after it has
+     * marked the database dirty, which leaves it off until the boot commit:
+     * wait for that one instead, as without a buffer */
+    if (size < ((size_t)4 << 20) || size < (size_t)entries * Q2_COMMIT_ENTRY_BYTES)
+        return 0;
+    return size;
+}
+#endif /* SHANLING_Q2 */
+
 static bool commit(void)
 {
     struct tagcache_header tch;
@@ -3381,6 +3415,9 @@ static bool commit(void)
 #endif
 #ifdef HAVE_TC_RAMCACHE
     bool ramcache_buffer_stolen = false;
+#endif
+#ifdef SHANLING_Q2
+    bool q2_buffer_allocated = false;
 #endif
     logf("committing tagcache");
 
@@ -3469,6 +3506,29 @@ static bool commit(void)
         tempbuf_size &= ~0x03;
     }
 #endif /*defined(PLUGIN)*/
+
+#ifdef SHANLING_Q2
+    /* The Q2 has no dircache or ramcache buffer to borrow, so only the boot
+     * commit had one: every update that found new music waited for the next
+     * boot, which then stopped for a foreground commit. This one comes from
+     * Linux, not the audio buffer, so playback goes on; if there isn't room,
+     * the commit waits for the next boot as before. */
+    if (tempbuf_size == 0)
+    {
+        /* current_tcmh is the removed database's after Initialize Now:
+         * only a database whose headers just checked out counts */
+        long entries = (tc_stat.ready ? current_tcmh.tch.entry_count : 0) +
+                       tch.entry_count;
+        size_t size = q2_commit_buffer_size(entries);
+        char *buf = size ? malloc(size) : NULL;
+        if (buf)
+        {
+            tempbuf = buf;
+            tempbuf_size = size;
+            q2_buffer_allocated = true;
+        }
+    }
+#endif /* SHANLING_Q2 */
 
     /* And finally fail if there are no buffers available. */
     if (tempbuf_size == 0)
@@ -3574,6 +3634,15 @@ commit_error:
 #endif /* HAVE_TC_RAMCACHE */
 
     read_lock--;
+
+#ifdef SHANLING_Q2
+    if (q2_buffer_allocated)
+    {
+        free(tempbuf);
+        tempbuf = NULL;
+        tempbuf_size = 0;
+    }
+#endif
 
 #ifdef HAVE_DIRCACHE
     /* Resume the dircache, if we stole the buffer. */
