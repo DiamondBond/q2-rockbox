@@ -160,11 +160,14 @@ int button_read_device(void)
             if (d == KEYS && e.type == EV_KEY) {
                 int b = key_button(e.code);
                 buttons = e.value ? buttons | b : buttons & ~b;
+                if (e.value == 1)
+                    shanlingq2_bt_key();
             } else if (d == AVRCP && e.type == EV_KEY && e.value == 1) {
                 int b = headset_button(e.code);
                 if (b) {
                     reset_poweroff_timer();
                     button_queue_post(b, 0);
+                    shanlingq2_bt_key();
                 }
             } else if (d == WHEEL && e.type == EV_ABS) {
                 if (e.code == ABS_PRESSURE && !e.value)
