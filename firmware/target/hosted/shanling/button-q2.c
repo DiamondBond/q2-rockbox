@@ -31,8 +31,10 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include "button.h"
+#include "audio.h"
 #include "backlight.h"
 #include "kernel.h"
+#include "pcm-alsa.h"
 #include "powermgmt.h"
 #include "shanlingq2_codec.h"
 #include "wheel-q2.h"
@@ -41,6 +43,11 @@ enum { KEYS, WHEEL, AVRCP, NDEV };
 static const char *const names[NDEV] = { "md-gpio-keys", "hyn_sliderbar", "(AVRCP)" };
 static struct pollfd fds[NDEV];
 static int wheel_step;
+/* The headset has been the output while its input was open (kept through the
+ * writer's own fallback to the DAC, which can come first); it left while
+ * playing, so its return is a plug-in */
+static bool bt_was_output, bt_unplugged;
+static bool bt_left; /* its input went away: a return is on a new transport */
 
 static bool is_device(int d, const char *name)
 {
@@ -142,8 +149,32 @@ int button_read_device(void)
         rescan = current_tick + HZ;
         if (fds[KEYS].fd < 0 || fds[WHEEL].fd < 0 ||
             (fds[AVRCP].fd < 0 && (shanlingq2_bt_output() ||
-                                   access("/sys/class/bluetooth/hci0", F_OK) == 0)))
+                                   access("/sys/class/bluetooth/hci0", F_OK) == 0))) {
+            bool headset = fds[AVRCP].fd >= 0;
             open_devices();
+            /* a headset back is on a new transport; headphones in keep the DAC.
+             * Not the first time its input shows: that headset already plays */
+            if (!headset && fds[AVRCP].fd >= 0) {
+                if (bt_left && !headphones_inserted())
+                    pcm_alsa_reattach();
+                bt_left = false;
+            }
+        }
+    }
+
+    /* Plugged in once the writer has finished choosing: on the headset again,
+     * Pause and Resume resumes; on the DAC (headphones in, or no PCM for it)
+     * nothing does */
+    if (bt_unplugged && fds[AVRCP].fd >= 0 && !pcm_alsa_reattach_pending()) {
+        bt_unplugged = false;
+        if (shanlingq2_bt_output())
+            button_queue_post(SYS_PHONE_PLUGGED, 0);
+    }
+    if (fds[AVRCP].fd >= 0) {
+        if (shanlingq2_bt_output())
+            bt_was_output = true;
+        else if (headphones_inserted())
+            bt_was_output = false;
     }
 
     while (poll(fds, NDEV, 0) > 0) {
@@ -153,6 +184,18 @@ int button_read_device(void)
                 fds[d].fd = -1;
                 if (d == KEYS) buttons = 0;
                 else anchor = -1;
+                if (d == AVRCP)
+                    bt_left = true;
+                /* the headset gone (into its case) while it played: as
+                 * headphones unplugged, so Pause on Headphone Unplug pauses */
+                if (d == AVRCP && bt_was_output) {
+                    int a = audio_status();
+                    bt_was_output = false;
+                    if ((a & AUDIO_STATUS_PLAY) && !(a & AUDIO_STATUS_PAUSE)) {
+                        bt_unplugged = true;
+                        button_queue_post(SYS_PHONE_UNPLUGGED, 0);
+                    }
+                }
                 continue;
             }
             if (!(fds[d].revents & POLLIN) || read(fds[d].fd, &e, sizeof e) != sizeof e)

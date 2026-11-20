@@ -123,6 +123,7 @@ static const char *current_alsa_device;
 #define WRITER_POLL_US 5000
 static pthread_t writer;
 static bool writer_run = false;
+static bool reattach_wanted; /* until the writer has chosen again */
 static volatile bool dma_playing = false;
 
 void pcm_alsa_set_playback_device(const char *device)
@@ -638,8 +639,13 @@ static void *writer_main(void *arg)
         }
 #endif
 
+        bool reattach = __atomic_load_n(&reattach_wanted, __ATOMIC_ACQUIRE);
+        if (reattach)
+            lost = true; /* with or without a handle: writer_reopen copes */
         if (lost)
             lost = writer_reopen() < 0;
+        if (reattach)
+            __atomic_store_n(&reattach_wanted, false, __ATOMIC_RELEASE);
         playing = dma_playing;
         pthread_mutex_unlock(&pcm_mtx);
 
@@ -647,6 +653,23 @@ static void *writer_main(void *arg)
         usleep(lost ? 1000000 : playing ? WRITER_POLL_US : 100000);
     }
     return NULL;
+}
+
+/* A Bluetooth headset that left (into its case) and came back plays on a new
+ * A2DP transport, and the PCM the writer holds is still the old one's: bluez-
+ * alsa takes its samples and they go nowhere. The writer opens it again, as
+ * for a lost device, and audiohw_preinit chooses again (wired headphones win).
+ * ponytail: only while the writer runs, so a headset first connected while
+ * Rockbox plays on the DAC still waits for Rockbox's next start. */
+bool pcm_alsa_reattach_pending(void)
+{
+    return __atomic_load_n(&reattach_wanted, __ATOMIC_ACQUIRE);
+}
+
+void pcm_alsa_reattach(void)
+{
+    if (__atomic_load_n(&writer_run, __ATOMIC_ACQUIRE)) /* nothing else takes it */
+        __atomic_store_n(&reattach_wanted, true, __ATOMIC_RELEASE);
 }
 
 /* The writer runs with every signal blocked: Rockbox's own (its tick, SIGIO)
