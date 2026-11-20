@@ -38,10 +38,20 @@
  * Idle: as stock's check_dacoff_state, the DAC powers off DAC_IDLE_TICKS after
  * pcm-alsa stops and on again before it starts, the PCM left open throughout.
  * The driver keeps the rate from hw_params, without I2C while off, and applies
- * it at power on, so a rate change before the wake is fine. */
+ * it at power on, so a rate change before the wake is fine.
+ *
+ * Driver calls: only dac_thread calls the driver. Every other thread, SIGIO
+ * included, sets what the DAC should be (want_*) and sends a byte down a pipe.
+ * Each call waits on the DAC's I2C, and on a Q2 whose bus had stopped answering
+ * one waited 23 s; Rockbox's threads all run on the main thread, so the screen
+ * and keys went with it. A start still waits for the power on, as it did, but
+ * for 1.5 s at most. */
 #include <alsa/asoundlib.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include "config.h"
@@ -69,11 +79,18 @@ static int filter = 0;
 static int muted = -1;
 static int vol[2] = { -1000, -1000 }; /* silent until Rockbox sets its volume */
 static bool bt_output;
-/* DAC ioctls and dac_on, across the tick, main and writer threads. Never from
- * SIGIO, which is why audiohw_mute doesn't take it. */
-static pthread_mutex_t dac_mtx = PTHREAD_MUTEX_INITIALIZER;
+/* What the DAC should be: set from any thread, SIGIO included (plain stores,
+ * then a byte down kick_pipe). want_on also changes between the tick and the
+ * main thread, under want_mtx, so an idle power off can't undo a wake. */
+static volatile int want_on, want_mute = -1, want_gain, want_filter;
+static pthread_mutex_t want_mtx = PTHREAD_MUTEX_INITIALIZER;
+/* What it is: written only by dac_thread */
 static volatile bool dac_on;
 static volatile long idle_since; /* tick of the last stop; 0: not idle */
+static int kick_pipe[2] = { -1, -1 };
+static unsigned asked, applied; /* requests made; the last one dac_thread applied */
+static pthread_mutex_t applied_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t applied_cond; /* on CLOCK_MONOTONIC: dac_thread_start */
 
 static void dac_set(unsigned long req, int v)
 {
@@ -91,20 +108,120 @@ static bool bt_connected(void)
     return true;
 }
 
-/* All a DAC powered off has lost, with dac_mtx held. The driver sleeps about
- * 530 ms in here (100 in HEADSET, 428 in POWER), and its last sleep plus the 10
- * jiffies it waits to unmute are settling enough, as for stock. */
-static void dac_power_on(void)
+/* dac_thread only: make the DAC what want_* says. Powering on restores all a
+ * powered-off DAC has lost, in stock's order; the driver sleeps about 530 ms in
+ * there (100 in HEADSET, 428 in POWER), and its last sleep plus the 10 jiffies
+ * it waits to unmute are settling enough, as for stock. */
+static void dac_apply(void)
 {
-    dac_set(DAC_HEADSET, 1);
-    dac_set(DAC_POWER, 1);
-    dac_set(DAC_PCM, 0);
-    dac_set(DAC_VOLUME, 100 << 8 | 100);
-    dac_set(DAC_GAIN, gain);
-    dac_set(DAC_FILTER, filter);
-    if (muted >= 0)
-        dac_set(DAC_MUTE, muted); /* a later call: the DAC's own state */
-    dac_on = dac >= 0;
+    static int cur_mute = -1, cur_gain = -1, cur_filter = -1;
+    if (want_on && !dac_on && dac >= 0) {
+        dac_set(DAC_HEADSET, 1);
+        dac_set(DAC_POWER, 1);
+        dac_set(DAC_PCM, 0);
+        dac_set(DAC_VOLUME, 100 << 8 | 100);
+        cur_mute = cur_gain = cur_filter = -1;
+        dac_on = true;
+    } else if (!want_on && dac_on) {
+        /* Decided under want_mtx, where a wake reads dac_on: the wake either
+         * keeps it on or sees it off and waits for the power on. The stored
+         * mute and volume stay: the driver's mute holds through the wake,
+         * which then restores ours. */
+        pthread_mutex_lock(&want_mtx);
+        bool off = !want_on;
+        if (off)
+            dac_on = false;
+        pthread_mutex_unlock(&want_mtx);
+        if (!off)
+            return;
+        dac_set(DAC_MUTE, 1);
+        dac_set(DAC_POWER, 0);
+        return;
+    }
+    if (!dac_on)
+        return;
+    if (want_gain != cur_gain)
+        dac_set(DAC_GAIN, cur_gain = want_gain);
+    if (want_filter != cur_filter)
+        dac_set(DAC_FILTER, cur_filter = want_filter);
+    int m = want_mute;
+    if (m >= 0 && m != cur_mute)
+        dac_set(DAC_MUTE, cur_mute = m); /* a later call: the DAC's own state */
+}
+
+static void *dac_thread(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        char b[16];
+        ssize_t n = read(kick_pipe[0], b, sizeof b);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            return NULL;
+        unsigned seen = __atomic_load_n(&asked, __ATOMIC_SEQ_CST);
+        dac_apply();
+        pthread_mutex_lock(&applied_mtx);
+        applied = seen;
+        pthread_cond_broadcast(&applied_cond);
+        pthread_mutex_unlock(&applied_mtx);
+    }
+}
+
+/* Async-signal-safe: an atomic add and a write that never blocks */
+static unsigned dac_kick(void)
+{
+    unsigned n = __atomic_add_fetch(&asked, 1, __ATOMIC_SEQ_CST);
+    if (kick_pipe[1] >= 0) {
+        char c = 0;
+        ssize_t r = write(kick_pipe[1], &c, 1); /* a full pipe: one is pending */
+        (void)r;
+    }
+    return n;
+}
+
+/* Until dac_thread has applied request n, or ms have passed */
+static void dac_wait(unsigned n, int ms)
+{
+    struct timespec until;
+    if (kick_pipe[0] < 0)
+        return; /* no dac_thread: nothing would answer */
+    clock_gettime(CLOCK_MONOTONIC, &until);
+    until.tv_sec += ms / 1000;
+    until.tv_nsec += (ms % 1000) * 1000000L;
+    if (until.tv_nsec >= 1000000000L) {
+        until.tv_sec++;
+        until.tv_nsec -= 1000000000L;
+    }
+    pthread_mutex_lock(&applied_mtx);
+    while ((int)(applied - n) < 0)
+        if (pthread_cond_timedwait(&applied_cond, &applied_mtx, &until) == ETIMEDOUT)
+            break;
+    pthread_mutex_unlock(&applied_mtx);
+}
+
+/* Once, before the first driver call. Signals blocked: Rockbox's own (its tick,
+ * SIGIO) stay with the threads they are for. */
+static void dac_thread_start(void)
+{
+    if (kick_pipe[0] >= 0 || pipe2(kick_pipe, O_CLOEXEC) < 0)
+        return;
+    fcntl(kick_pipe[1], F_SETFL, O_NONBLOCK);
+    pthread_condattr_t ca;
+    pthread_condattr_init(&ca);
+    pthread_condattr_setclock(&ca, CLOCK_MONOTONIC);
+    pthread_cond_init(&applied_cond, &ca);
+    pthread_condattr_destroy(&ca);
+    sigset_t all, old;
+    pthread_t t;
+    sigfillset(&all);
+    pthread_sigmask(SIG_BLOCK, &all, &old);
+    if (pthread_create(&t, NULL, dac_thread, NULL) != 0) {
+        close(kick_pipe[0]);
+        close(kick_pipe[1]);
+        kick_pipe[0] = kick_pipe[1] = -1;
+    }
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
 }
 
 /* pcm-alsa calls this before opening the PCM, and again when the headset is
@@ -124,34 +241,33 @@ void audiohw_preinit(void)
         if (dac < 0)
             usleep(50000);
     }
-    pthread_mutex_lock(&dac_mtx);
-    dac_power_on();
+    dac_thread_start();
+    pthread_mutex_lock(&want_mtx);
+    want_on = 1;
+    pthread_mutex_unlock(&want_mtx);
     audiohw_mute(false);
-    pthread_mutex_unlock(&dac_mtx);
+    dac_wait(dac_kick(), 2000);
 }
 
 static bool dac_idle_expired(void)
 {
     long since = idle_since;
-    return dac_on && since && !TIME_BEFORE(current_tick, since + DAC_IDLE_TICKS);
+    return want_on && since && !TIME_BEFORE(current_tick, since + DAC_IDLE_TICKS);
 }
 
-/* Takes the driver 300 ms when it expires, on the tick thread. The stored mute
- * and volume stay as they are: the driver's mute holds through the wake, which
- * then restores ours.
- * ponytail: ticks pause for those 300 ms, then catch up (kernel-unix.c). Only
- * after 30 s of silence; give it its own thread if the hitch ever shows. */
+/* On the tick thread: asks dac_thread for the power off (about 300 ms in the
+ * driver) and carries on */
 static void dac_idle_tick(void)
 {
     if (!dac_idle_expired())
         return;
-    pthread_mutex_lock(&dac_mtx);
-    if (dac_idle_expired()) { /* a wake may have just cleared it */
-        dac_on = false;
-        dac_set(DAC_MUTE, 1);
-        dac_set(DAC_POWER, 0);
-    }
-    pthread_mutex_unlock(&dac_mtx);
+    pthread_mutex_lock(&want_mtx);
+    bool off = dac_idle_expired(); /* a wake may have just cleared it */
+    if (off)
+        want_on = 0;
+    pthread_mutex_unlock(&want_mtx);
+    if (off)
+        dac_kick();
 }
 
 /* From sink_dma_stop, maybe in SIGIO: no lock, no ioctl */
@@ -164,11 +280,18 @@ void shanlingq2_dac_idle(void)
 /* From sink_dma_start, before any fill */
 void shanlingq2_dac_wake(void)
 {
+    pthread_mutex_lock(&want_mtx);
     idle_since = 0;
-    pthread_mutex_lock(&dac_mtx);
-    if (!dac_on && !bt_output)
-        dac_power_on();
-    pthread_mutex_unlock(&dac_mtx);
+    if (!bt_output)
+        want_on = 1;
+    bool on = dac_on;
+    pthread_mutex_unlock(&want_mtx);
+    if (bt_output)
+        return;
+    unsigned n = dac_kick();
+    if (!on)
+        dac_wait(n, 1500); /* the power on, as before, after an idle power off
+                            * it may be finishing; never longer than 1.5 s */
 }
 
 /* Not in preinit: writer_reopen calls that during playback */
@@ -185,14 +308,23 @@ bool shanlingq2_bt_output(void)
 
 void audiohw_close(void)
 {
-    pthread_mutex_lock(&dac_mtx);
     audiohw_mute(true);
-    dac_set(DAC_POWER, 0);
-    dac_on = false;
-    if (dac >= 0)
+    pthread_mutex_lock(&want_mtx);
+    want_on = 0;
+    pthread_mutex_unlock(&want_mtx);
+    unsigned n = dac_kick();
+    bool thread = kick_pipe[0] >= 0; /* none while Bluetooth was the only output */
+    if (thread)
+        dac_wait(n, 1000);
+    /* dac_thread may still be in the driver if it didn't answer: leave the fd
+     * open for it then (Rockbox is exiting) */
+    pthread_mutex_lock(&applied_mtx);
+    bool idle = !thread || (int)(applied - n) >= 0;
+    pthread_mutex_unlock(&applied_mtx);
+    if (idle && dac >= 0) {
         close(dac);
-    dac = -1;
-    pthread_mutex_unlock(&dac_mtx);
+        dac = -1;
+    }
 }
 
 void audiohw_set_frequency(int fsel)
@@ -213,11 +345,9 @@ void audiohw_mute(int mute)
     if (muted == mute)
         return;
     muted = mute;
-    /* No dac_mtx: sink_dma_stop can call this in SIGIO. Nor is it needed there:
-     * the wake that started playback cleared the stamp, so nothing powers off
-     * until the stop that follows this. */
-    if (dac_on)
-        dac_set(DAC_MUTE, mute ? 1 : 0);
+    /* sink_dma_stop can call this in SIGIO: no lock, no driver call here */
+    want_mute = mute ? 1 : 0;
+    dac_kick();
     if (mute)
         pcm_set_mixer_volume(-1000, -1000); /* tenths of a dB */
     else
@@ -227,10 +357,8 @@ void audiohw_mute(int mute)
 void audiohw_set_power_mode(int mode)
 {
     gain = mode == SOUND_HIGH_POWER;
-    pthread_mutex_lock(&dac_mtx);
-    if (dac_on)
-        dac_set(DAC_GAIN, gain);
-    pthread_mutex_unlock(&dac_mtx);
+    want_gain = gain;
+    dac_kick();
 }
 
 void audiohw_set_filter_roll_off(int value)
@@ -238,8 +366,6 @@ void audiohw_set_filter_roll_off(int value)
     if ((unsigned)value > 3)
         return;
     filter = value;
-    pthread_mutex_lock(&dac_mtx);
-    if (dac_on)
-        dac_set(DAC_FILTER, filter);
-    pthread_mutex_unlock(&dac_mtx);
+    want_filter = filter;
+    dac_kick();
 }
