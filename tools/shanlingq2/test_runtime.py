@@ -85,9 +85,10 @@ static int writer_reopen(void) { reopened++; return -ENODEV; }
 #define DEFAULT_PLAYBACK_DEVICE "plughw:0,0"
 static const char *current_alsa_device = "bluealsa";
 static bool phones_in;
-static int loops = 1, plug_at;
-/* plugged in from the start, or once loops counts down to plug_at */
-static bool headphones_inserted(void) { return phones_in || loops <= plug_at; }
+static int loops = 1, plug_at, unplug_at;
+/* plugged in from the start, or once loops counts down to plug_at, until it
+ * counts down to unplug_at */
+static bool headphones_inserted(void) { return (phones_in || loops <= plug_at) && loops > unplug_at; }
 #include <string.h>
 static int mock_usleep(unsigned usec) { slept = usec; if (--loops <= 0) writer_run = false; return 0; }
 #define usleep mock_usleep
@@ -140,6 +141,15 @@ int main(void) {
     current_alsa_device = DEFAULT_PLAYBACK_DEVICE;
     writer_run = true; loops = 60;
     writer_main(NULL); assert(reopened == 1);
+    /* Unplugged on the DAC: one reopen, so a connected headset plays again;
+     * none on Bluetooth */
+    phones_in = true; plug_at = 0; unplug_at = 30; reopened = 0;
+    writer_run = true; loops = 60;
+    writer_main(NULL); assert(reopened == 1);
+    current_alsa_device = "bluealsa"; reopened = 0;
+    writer_run = true; loops = 60;
+    writer_main(NULL); assert(!reopened);
+    current_alsa_device = DEFAULT_PLAYBACK_DEVICE; phones_in = false; unplug_at = 0;
     /* ALSA can start itself at the write threshold while priming. Each
      * skip/selection must still unmute, just as an explicit start does. */
     for (int automatic = 0; automatic < 2; automatic++) {
