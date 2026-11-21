@@ -820,6 +820,17 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
                 sound_set_volume(global_status.volume);
             return 0;
         }
+        /* the Bluetooth headset's own volume moved (its keys, a car's knob):
+         * Rockbox's follows (shanlingq2_codec.c), while it is the output */
+        case SYS_VOLUME_CHANGED:
+        {
+            int volume = button_get_data();
+            if (global_status.volume_on_bt && global_status.volume != volume) {
+                global_status.volume = volume;
+                setvol();
+            }
+            return 0;
+        }
 #endif
 #if (CONFIG_PLATFORM & PLATFORM_HOSTED) && defined(PLATFORM_HAS_VOLUME_CHANGE)
         case SYS_VOLUME_CHANGED:

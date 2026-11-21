@@ -41,8 +41,11 @@
  * it at power on, so a rate change before the wake is fine. */
 #include <alsa/asoundlib.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include "config.h"
@@ -71,11 +74,13 @@ static int muted = -1;
 static int vol[2] = { -1000, -1000 }; /* silent until Rockbox sets its volume */
 static bool bt_output;
 
-/* An event for Rockbox's main thread (misc.c): the output chosen, the latest
- * value. Rockbox's queues aren't for its other threads, so the tick thread's
- * button_read_device posts it, as it posts the keys. Only the newest matters,
- * so one slot, and a slow tick can't lose the newest. */
-static volatile int ev_output = -1; /* 0 DAC, 1 Bluetooth; -1 none pending */
+/* Events for Rockbox's main thread (misc.c), the latest value of each: the
+ * output chosen, and the headset's volume. Rockbox's queues aren't for its
+ * other threads, so the tick thread's button_read_device posts them, as it
+ * posts the keys. Only the newest matters, so one slot each, and a slow tick
+ * can't lose the newest. */
+static volatile int ev_output = -1;      /* 0 DAC, 1 Bluetooth; -1 none pending */
+static volatile int ev_volume = INT_MIN; /* the headset's, in dB; INT_MIN none */
 /* The output changed: silent until Rockbox sets the volume that goes with it
  * (misc.c's setvol), not the other output's level meanwhile */
 static volatile bool vol_pending;
@@ -86,12 +91,345 @@ void shanlingq2_volume_ack(void)
     vol_ack = true;
 }
 
+/* The headset's own volume, through bluez-alsa's ctl "bluealsa": its "<name> -
+ * A2DP Playback Volume" element, 0..127, is AVRCP absolute volume, which the
+ * headset applies itself (the Q2's bluealsa runs with native volume; Q2 Pod's
+ * Control Device Volume relies on that too). While such a headset is the
+ * output, Rockbox's volume sets it and pcm-alsa's mixer carries only the
+ * balance; the headset's own keys or a car's knob move it, and Rockbox's
+ * volume follows (SYS_VOLUME_CHANGED). A thread of its own: a ctl write is a
+ * D-Bus round trip. It sleeps in poll() on the ctl's descriptors and a pipe,
+ * and nothing wakes it between. A headset without the element keeps the
+ * mixer's volume, as before. */
+#define DEV_VOL_MAX 127
+#define VOL_MIN_CB  (-1000) /* AUDIOHW_SETTING(VOLUME): -100..0 dB, in tenths */
+static int dev_pipe[2] = { -1, -1 };
+static volatile int dev_want = -1;     /* 0..127 to write; -1 none */
+static volatile bool dev_vol;          /* the headset has the element */
+static volatile int dev_reported = INT_MIN; /* the cb last reported to Rockbox */
+
+static int cb_to_dev(int cb)
+{
+    if (cb < VOL_MIN_CB)
+        cb = VOL_MIN_CB;
+    if (cb > 0)
+        cb = 0;
+    return ((cb - VOL_MIN_CB) * DEV_VOL_MAX + -VOL_MIN_CB / 2) / -VOL_MIN_CB;
+}
+
+static int dev_to_db(int d) /* whole dB: global_status.volume's unit */
+{
+    int cb = VOL_MIN_CB + (d * -VOL_MIN_CB + DEV_VOL_MAX / 2) / DEV_VOL_MAX;
+    return (cb - 5) / 10;
+}
+
+/* The mixer: the volume, or with the headset's own volume in use only the
+ * balance, the louder channel at 0 dB */
+static void apply_mixer(void)
+{
+    if (muted || vol_pending) {
+        pcm_set_mixer_volume(-1000, -1000); /* tenths of a dB */
+        return;
+    }
+    if (bt_output && dev_vol) {
+        int m = MAX(vol[0], vol[1]);
+        pcm_set_mixer_volume(vol[0] - m, vol[1] - m);
+    } else {
+        pcm_set_mixer_volume(vol[0], vol[1]);
+    }
+}
+
+static void dev_kick(void)
+{
+    if (dev_pipe[1] >= 0) {
+        char c = 0;
+        ssize_t r = write(dev_pipe[1], &c, 1);
+        (void)r;
+    }
+}
+
+/* The volume element among the ctl's, or false */
+static bool dev_find(snd_ctl_t *ctl, snd_ctl_elem_id_t *id)
+{
+    snd_ctl_elem_list_t *list;
+    bool found = false;
+    if (snd_ctl_elem_list_malloc(&list) < 0)
+        return false;
+    if (snd_ctl_elem_list(ctl, list) >= 0 &&
+        snd_ctl_elem_list_alloc_space(list, snd_ctl_elem_list_get_count(list)) >= 0 &&
+        snd_ctl_elem_list(ctl, list) >= 0) {
+        unsigned n = snd_ctl_elem_list_get_used(list);
+        for (unsigned i = 0; i < n && !found; i++) {
+            const char *name = snd_ctl_elem_list_get_name(list, i);
+            size_t len = strlen(name);
+            static const char suffix[] = " - A2DP Playback Volume";
+            if (len > sizeof suffix - 1 && !strcmp(name + len - (sizeof suffix - 1), suffix)) {
+                snd_ctl_elem_list_get_id(list, i, id);
+                found = true;
+            }
+        }
+        snd_ctl_elem_list_free_space(list);
+    }
+    snd_ctl_elem_list_free(list);
+    return found;
+}
+
+static int dev_read(snd_ctl_t *ctl, snd_ctl_elem_id_t *id, snd_ctl_elem_value_t *v)
+{
+    snd_ctl_elem_value_set_id(v, id);
+    if (snd_ctl_elem_read(ctl, v) < 0)
+        return -1;
+    return (int)snd_ctl_elem_value_get_integer(v, 0);
+}
+
+static bool dev_write(snd_ctl_t *ctl, snd_ctl_elem_id_t *id, snd_ctl_elem_value_t *v, int d)
+{
+    snd_ctl_elem_value_set_id(v, id);
+    snd_ctl_elem_value_set_integer(v, 0, d);
+    snd_ctl_elem_value_set_integer(v, 1, d);
+    return snd_ctl_elem_write(ctl, v) >= 0;
+}
+
+/* The headset's reports, as stock's player takes them (it reads the headset
+ * every 400 ms and keeps only what stays): a report counts once its value has
+ * held for DEV_HOLD_MS. For DEV_SETTLE_MS after a write of ours the headset is
+ * settling: its confirmations come late, in its own steps, and after the
+ * hand-over the one for stock's raise to the maximum can arrive after our
+ * write. A read-back within one step confirms the write; another value is
+ * written over again, twice at most. The first write to a transport is
+ * confirmed before the mixer leaves the volume to the headset: until then, and
+ * for a headset that holds to its own level, pcm-alsa's mixer keeps it. */
+#define DEV_HOLD_MS   400
+#define DEV_SETTLE_MS 1500
+static volatile bool dev_scan_req; /* the swap set: confirm the headset at this level */
+
+static int64_t dev_now_ms(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
+
+/* Writes the headset's volume and opens the settling window. The reports queued
+ * are from before the write and go; an element added or removed meanwhile is
+ * kept as a rescan. */
+static bool dev_write_settle(snd_ctl_t *ctl, snd_ctl_elem_id_t *id, snd_ctl_elem_value_t *v,
+                             snd_ctl_event_t *ev, int d, bool *rescan, int64_t *quiet_until)
+{
+    if (!dev_write(ctl, id, v, d))
+        return false;
+    while (snd_ctl_read(ctl, ev) > 0) {
+        if (snd_ctl_event_get_type(ev) != SND_CTL_EVENT_ELEM)
+            continue;
+        unsigned mask = snd_ctl_event_elem_get_mask(ev);
+        if (mask == SND_CTL_EVENT_MASK_REMOVE || (mask & SND_CTL_EVENT_MASK_ADD))
+            *rescan = true;
+    }
+    *quiet_until = dev_now_ms() + DEV_SETTLE_MS;
+    return true;
+}
+
+static void *dev_thread(void *arg)
+{
+    (void)arg;
+    snd_ctl_t *ctl = NULL;
+    snd_ctl_elem_id_t *id;
+    snd_ctl_elem_value_t *val;
+    snd_ctl_event_t *ev;
+    int last = -1;  /* what the headset is at, as last written or adopted */
+    int cand = -1;  /* a value it reported, waiting to hold */
+    int64_t cand_at = 0, quiet_until = 0;
+    int retries = 0;
+    bool scan = false;  /* the element is to be looked for */
+    bool first = false; /* the first write to this transport awaits its confirmation */
+    if (snd_ctl_elem_id_malloc(&id) < 0 || snd_ctl_elem_value_malloc(&val) < 0 ||
+        snd_ctl_event_malloc(&ev) < 0)
+        return NULL;
+    for (;;) {
+        if (!ctl) {
+            if (snd_ctl_open(&ctl, BT_DEVICE, 0) < 0) {
+                ctl = NULL; /* no bluealsa: again at the next kick (a swap set) */
+                struct pollfd p = { .fd = dev_pipe[0], .events = POLLIN };
+                poll(&p, 1, -1);
+                char b[16];
+                while (read(dev_pipe[0], b, sizeof b) > 0)
+                    ;
+                continue;
+            }
+            snd_ctl_subscribe_events(ctl, 1);
+            scan = true;
+        }
+        if (scan) {
+            scan = false;
+            __atomic_store_n(&dev_scan_req, false, __ATOMIC_RELEASE); /* this is it */
+            last = cand = -1; /* a new transport: nothing known about it */
+            quiet_until = 0;
+            retries = 0;
+            first = false;
+            dev_vol = false; /* the mixer's volume until the headset confirms ours */
+            apply_mixer();
+            /* not while the output's level is still to be swapped in: its set requests this again */
+            if (dev_find(ctl, id) && bt_output && !vol_pending) {
+                int d = cb_to_dev(MAX(vol[0], vol[1]));
+                if (dev_write_settle(ctl, id, val, ev, d, &scan, &quiet_until)) {
+                    last = d;
+                    first = true;
+                }
+            }
+            if (scan)
+                continue; /* the element came or went during the write */
+        }
+        int64_t end = first ? quiet_until : cand >= 0 ? MAX(cand_at + DEV_HOLD_MS, quiet_until) : -1;
+        int tmo = -1; /* only while a write awaits its confirmation or a report its hold */
+        if (end >= 0) {
+            int64_t left = end - dev_now_ms();
+            tmo = left > 0 ? (int)left : 0;
+        }
+        struct pollfd pfd[4];
+        int np = snd_ctl_poll_descriptors(ctl, pfd, 3);
+        if (np < 0)
+            np = 0;
+        pfd[np].fd = dev_pipe[0];
+        pfd[np].events = POLLIN;
+        int r = poll(pfd, np + 1, tmo);
+        if (r < 0)
+            continue;
+        if (pfd[np].revents & POLLIN) {
+            char b[16];
+            while (read(dev_pipe[0], b, sizeof b) > 0)
+                ;
+            if (__atomic_exchange_n(&dev_scan_req, false, __ATOMIC_ACQ_REL))
+                scan = true; /* the swap set: confirm the headset at this level */
+            int w = __atomic_exchange_n(&dev_want, -1, __ATOMIC_ACQ_REL);
+            if (w >= 0 && dev_vol && w != last &&
+                dev_write_settle(ctl, id, val, ev, w, &scan, &quiet_until)) {
+                last = w;
+                retries = 0;
+                cand = -1;
+            }
+            if (scan)
+                continue;
+        }
+        int64_t now = dev_now_ms();
+        if (first && now >= quiet_until) {
+            /* the first write: the level Rockbox wants now, if it moved meanwhile, is
+             * written instead; else a read-back within one step confirms it, another
+             * value is written over again, twice at most, or the headset holds to its
+             * own level and the mixer keeps the volume */
+            bool live = bt_output && !vol_pending; /* read before vol[]: it is theirs */
+            int want = live ? cb_to_dev(MAX(vol[0], vol[1])) : last;
+            if (abs(want - last) > 1 &&
+                dev_write_settle(ctl, id, val, ev, want, &scan, &quiet_until)) {
+                last = want;
+                retries = 0;
+                continue;
+            }
+            int d = dev_read(ctl, id, val);
+            bool ok = d >= 0 && abs(d - want) <= 1;
+            if (!ok && retries < 2 &&
+                dev_write_settle(ctl, id, val, ev, want, &scan, &quiet_until)) {
+                last = want;
+                retries++;
+                continue;
+            }
+            first = false;
+            retries = 0;
+            if (d >= 0)
+                last = d;
+            if (ok && live) {
+                dev_vol = true;
+                apply_mixer();
+            }
+        } else if (!first && cand >= 0 && now >= MAX(cand_at + DEV_HOLD_MS, quiet_until)) {
+            int64_t at = cand_at;
+            cand = -1;
+            int d = dev_read(ctl, id, val);
+            if (d >= 0 && d != last) {
+                if (abs(d - last) <= 1) {
+                    last = d; /* its step for ours */
+                } else if (at < quiet_until && retries < 2 && last >= 0 &&
+                           dev_write_settle(ctl, id, val, ev, last, &scan, &quiet_until)) {
+                    retries++; /* reported while settling: once more */
+                    continue;
+                } else {
+                    last = d; /* its keys or a car's knob: Rockbox follows, no write back */
+                    retries = 0;
+                    if (bt_output) {
+                        int db = dev_to_db(d);
+                        dev_reported = db * 10; /* as audiohw_set_volume gets it */
+                        __atomic_store_n(&ev_volume, db, __ATOMIC_RELEASE);
+                    }
+                }
+            }
+        }
+        unsigned short re = 0;
+        if (np > 0)
+            snd_ctl_poll_descriptors_revents(ctl, pfd, np, &re);
+        if (re & (POLLERR | POLLHUP | POLLNVAL)) {
+            snd_ctl_close(ctl);
+            ctl = NULL;
+            dev_vol = false;
+            first = false;
+            cand = -1;
+            apply_mixer();
+            continue;
+        }
+        if (!(re & POLLIN))
+            continue;
+        bool changed = false;
+        while (snd_ctl_read(ctl, ev) > 0) {
+            if (snd_ctl_event_get_type(ev) != SND_CTL_EVENT_ELEM)
+                continue;
+            unsigned mask = snd_ctl_event_elem_get_mask(ev);
+            if (mask == SND_CTL_EVENT_MASK_REMOVE || (mask & SND_CTL_EVENT_MASK_ADD))
+                scan = true;
+            else if (mask & SND_CTL_EVENT_MASK_VALUE)
+                changed = true;
+        }
+        if (scan)
+            continue; /* found again above, on the new transport */
+        if (changed && dev_vol) {
+            int d = dev_read(ctl, id, val);
+            if (d >= 0 && d != last && d != cand) {
+                cand = d; /* counts once it has held (above) */
+                cand_at = now;
+            } else if (d == last) {
+                cand = -1;
+            }
+        }
+    }
+    return NULL;
+}
+
+/* With the first Bluetooth output; signals blocked as for the other threads */
+static void dev_thread_start(void)
+{
+    if (dev_pipe[0] >= 0 || pipe2(dev_pipe, O_CLOEXEC | O_NONBLOCK) < 0)
+        return;
+    sigset_t all, old;
+    pthread_t t;
+    sigfillset(&all);
+    pthread_sigmask(SIG_BLOCK, &all, &old);
+    if (pthread_create(&t, NULL, dev_thread, NULL) != 0) {
+        close(dev_pipe[0]);
+        close(dev_pipe[1]);
+        dev_pipe[0] = dev_pipe[1] = -1;
+    }
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+}
+
 bool shanlingq2_take_event(long *id, intptr_t *data)
 {
     int o = __atomic_exchange_n(&ev_output, -1, __ATOMIC_ACQ_REL);
     if (o >= 0) {
         *id = SYS_OUTPUT_CHANGED;
         *data = o;
+        return true;
+    }
+    int v = __atomic_exchange_n(&ev_volume, INT_MIN, __ATOMIC_ACQ_REL);
+    if (v != INT_MIN) {
+        *id = SYS_VOLUME_CHANGED;
+        *data = v;
         return true;
     }
     return false;
@@ -144,15 +482,19 @@ void audiohw_preinit(void)
     if (changed) {
         was_bt = bt;
         vol_pending = true; /* before bt_output: the other output's level stays off this one */
-        pcm_set_mixer_volume(-1000, -1000);
+        dev_reported = INT_MIN; /* a headset back may stand elsewhere */
+        dev_vol = false;        /* the mixer's volume until dev_thread confirms ours */
     }
     bt_output = bt;
+    if (bt)
+        dev_thread_start(); /* before the event: its swap set kicks the thread */
     if (changed) {
         /* misc.c swaps in this output's volume and sets it, which ends the silence.
          * Not on every preinit: a bluealsa rate change reopens too, and each set
          * is a volume popup and a status write. Last: the set relies on bt_output */
         __atomic_store_n(&ev_output, bt, __ATOMIC_RELEASE);
     }
+    apply_mixer(); /* silent, or the headset's volume, or the mixer's */
     if (bt_output) {
         pcm_alsa_set_playback_device(BT_DEVICE);
         audiohw_mute(false);
@@ -243,14 +585,26 @@ void audiohw_set_frequency(int fsel)
 
 void audiohw_set_volume(int vol_l, int vol_r)
 {
+    vol[0] = vol_l;
+    vol[1] = vol_r;
     if (vol_ack) { /* not the sets before misc.c's: the other output's level */
         vol_ack = false;
         vol_pending = false;
+        if (bt_output) { /* this output's level: the headset is confirmed at it */
+            __atomic_store_n(&dev_scan_req, true, __ATOMIC_RELEASE);
+            dev_kick();
+        }
     }
-    vol[0] = vol_l;
-    vol[1] = vol_r;
-    if (!muted && !vol_pending)
-        pcm_set_mixer_volume(vol_l, vol_r);
+    if (bt_output && dev_vol) {
+        /* the headset's own volume; not when this is it, reported back */
+        int m = MAX(vol_l, vol_r);
+        if (m != dev_reported) {
+            dev_want = cb_to_dev(m);
+            dev_kick();
+        }
+        dev_reported = INT_MIN;
+    }
+    apply_mixer();
 }
 
 void audiohw_mute(int mute)
@@ -263,10 +617,7 @@ void audiohw_mute(int mute)
      * until the stop that follows this. */
     if (dac_on)
         dac_set(DAC_MUTE, mute ? 1 : 0);
-    if (mute || vol_pending)
-        pcm_set_mixer_volume(-1000, -1000); /* tenths of a dB */
-    else
-        pcm_set_mixer_volume(vol[0], vol[1]);
+    apply_mixer();
 }
 
 void audiohw_set_power_mode(int mode)
