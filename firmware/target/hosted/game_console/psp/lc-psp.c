@@ -5,7 +5,7 @@
  *   Jukebox    |    |   (  <_> )  \___|    < | \_\ (  <_> > <  <
  *   Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
  *                     \/            \/     \/    \/            \/
- * $Id$
+ *
  *
  * Copyright (C) 2025 Mauricio G.
  *
@@ -29,7 +29,9 @@
 #include "sys_file.h"
 #include <pspkernel.h>
 
+#ifdef DEBUG
 #define DEBUG_PRX_MEMORY
+#endif
 
 /* Define LOGF_ENABLE to enable logf output in this file */
 #define LOGF_ENABLE
@@ -81,6 +83,7 @@ void * lc_open(const char *filename, unsigned char *buf, size_t buf_size)
 
     if (handle->id <= 0) {
         DEBUGF("sceKernelLoadModule: error 0x%x\n", handle->id);
+        free(handle);
         return NULL;
     }
 

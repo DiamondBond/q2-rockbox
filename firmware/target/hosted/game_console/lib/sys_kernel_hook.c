@@ -5,7 +5,7 @@
  *   Jukebox    |    |   (  <_> )  \___|    < | \_\ (  <_> > <  <
  *   Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
  *                     \/            \/     \/    \/            \/
- * $Id$
+ *
  *
  * Copyright (C) 2026 Mauricio Garrido
  *
@@ -110,7 +110,7 @@ int sys_display_disable(void)
 {
     if (_sceDisplayDisable) {
         struct KernelCallArg args;
-        kuKernelCall(_sceDisplayEnable, &args);
+        kuKernelCall(_sceDisplayDisable, &args);
         return args.ret1;
     }
 

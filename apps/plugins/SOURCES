@@ -5,6 +5,7 @@ battery_bench.c
 #ifdef HAVE_TAGCACHE
 db_folder_select.c
 tagcache/tagcache.c
+tagnavi_edit.c
 #endif
 chessclock.c
 countdown_timer.c
@@ -13,6 +14,7 @@ cube.c
 cue_playlist.c
 dart_scorer.c
 dict.c
+eq_optimizer.c
 file_picker.c
 jackpot.c
 keybox.c

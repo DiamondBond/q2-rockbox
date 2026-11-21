@@ -329,6 +329,7 @@ Lyre prototype 1 */
 #define NAND_CC      4 /* ChinaChip */
 #define NAND_RK27XX  5
 #define NAND_IMX233  6
+#define NAND_S5L8720 7 /* Apple S5L8720 FMI controller (iPod nano 4G) */
 
 /* CONFIG_RK27XX_FTL: the on-flash format of an rk27xx target's NAND. A
  * target that does not define it builds only the FTL scheme finder. */
@@ -1001,7 +1002,7 @@ Lyre prototype 1 */
 
 /* Enable the directory cache and tagcache in RAM if we have
  * plenty of RAM. Both features can be enabled independently. */
-#if (MEMORYSIZE >= 8) && !defined(BOOTLOADER) && (defined(CHECKWPS) || !defined(__PCTOOL__)) \
+#if (MEMORYSIZE >= 8) && !defined(BOOTLOADER) && !defined(__PCTOOL__) \
     && !defined(APPLICATION)
 #ifndef SIMULATOR
 #define HAVE_DIRCACHE

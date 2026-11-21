@@ -81,16 +81,23 @@
 
 #define CONFIG_STORAGE STORAGE_NAND
 
-// TODO
-//#define CONFIG_NAND NAND_SAMSUNG
-#define CONFIG_NAND 0
+#define CONFIG_NAND NAND_S5L8720
+
+/* Write to Apple's FTL. A failed block is not remapped yet: the disk
+ * becomes read-only until reboot. The bootloader arms its own writes
+ * only after PLAY is held. */
+#define N4G_FTL_WRITE
+#ifdef BOOTLOADER
+#define N4G_BL_FTL_WRITE
+#endif
 
 /* define this if at least one storage driver
    needs to do cleanup on shutdown */
 #define HAVE_STORAGE_FLUSH
 
-/* The NAND flash has 2048-byte sectors, and is our only storage */
-#define SECTOR_SIZE 2048
+/* NAND pages, Whimory sectors and the FAT32 volume Apple formats are
+ * all 4 KiB. */
+#define SECTOR_SIZE 4096
 
 /* LCD dimensions */
 #define LCD_WIDTH  240

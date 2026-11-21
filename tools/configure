@@ -2728,7 +2728,6 @@ fi
    81|ipodnano4g)
     target_id=118
     modelname="ipodnano4g"
-    bootloader_only="1"
     target="IPOD_NANO4G"
     memory=32 # always
     arm1176jzscc
@@ -2742,7 +2741,7 @@ fi
     arm_thumb_boot=1
     # toolset is the tools within the tools directory that we build for
     # this particular target.
-    toolset=$ipodbitmaptools
+    toolset="$ipodbitmaptools fmssasm"
     # architecture, manufacturer and model for the target-tree build
     t_cpu="arm"
     t_manufacturer="s5l8702"
@@ -3989,9 +3988,6 @@ fi
     t_manufacturer="ingenic_x1000"
     t_soc="ingenic"
     t_model="erosqnative"
-    # player version, for bootloader usage
-    # versions 1 and 2 both use 1
-    extradefines="$extradefines -DEROSQN_VER=1"
     ;;
 
    232|ihifi770c)
@@ -4479,6 +4475,7 @@ fi
       debug=""
       if [ "$bootloader_only" = "1" ]; then
         do_bootloader
+        btype="B" # set it explicitly since RET only gets here as well
         echo "Bootloader build selected"
       else
         btype="N" # set it explicitly since RET only gets here as well

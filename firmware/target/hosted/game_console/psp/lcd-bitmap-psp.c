@@ -5,7 +5,7 @@
  *   Jukebox    |    |   (  <_> )  \___|    < | \_\ (  <_> > <  <
  *   Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
  *                     \/            \/     \/    \/            \/
- * $Id$
+ *
  *
  * Copyright (C) 2006 Dan Everton
  *
@@ -29,6 +29,8 @@
 #include "lcd-target.h"
 
 #include "sys_display.h"
+#include "appevents.h"
+#include "events.h"
 #include "sys_kernel_hook.h"
 
 /*#define LOGF_ENABLE*/
@@ -61,7 +63,6 @@ void lcd_update_rect(int x, int y, int width, int height)
     src = FBADDR(x,y);
 
     sys_blit_surface_rect(src, x, y, width, height);
-    sys_flip_screen();
 }
 
 void lcd_update(void)
@@ -109,6 +110,7 @@ void lcd_enable(bool on)
     {
         sys_display_enable();
         lcd_on = true;
+        send_event(LCD_EVENT_ACTIVATION, NULL);
     }
 }
 #endif
