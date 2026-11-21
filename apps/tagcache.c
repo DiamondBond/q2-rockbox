@@ -756,45 +756,6 @@ static bool update_master_header(void)
     return true;
 }
 
-#ifdef SHANLING_Q2
-/* True when a sorted tag file still holds a name that delete_entry() blanked.
- * Names are never stored empty (check_if_empty) and commit() drops blank ones,
- * so a blank name is a deleted song waiting for that cleanup: until then an
- * artist or album whose songs were all deleted can still be listed. Also true
- * when a file can't be read, so that the commit runs as it would have. */
-static bool deleted_tags_pending(void)
-{
-    char buf[TAGCACHE_BUFSZ];
-    struct tagcache_header tch;
-    struct tagfile_entry tfe;
-
-    for (int tag = 0; tag < TAG_COUNT; tag++)
-    {
-        if (!TAGCACHE_IS_SORTED(tag))
-            continue;
-
-        int fd = open_tag_fd(&tch, tag, false);
-        if (fd < 0)
-            return true;
-
-        bool pending = false;
-        for (int i = 0; i < tch.entry_count && !pending; i++)
-        {
-            pending = read_tagfile_entry_and_tag(fd, &tfe, buf, sizeof(buf))
-                      != e_SUCCESS;
-            if ((i & 63) == 63)
-                yield();
-        }
-        close(fd);
-
-        if (pending)
-            return true;
-    }
-
-    return false;
-}
-#endif /* SHANLING_Q2 */
-
 #if !defined(PLUGIN)
 #ifndef __PCTOOL__
 static bool do_timed_yield(void)
@@ -3408,6 +3369,33 @@ static int build_index(int index_type, struct tagcache_header *h, int tmpfd)
     return 1;
 }
 
+/* True when the title file still holds a name that delete_entry() blanked.
+ * Names are never stored empty (check_if_empty) and commit() drops blank ones,
+ * and every deleted entry has its own title record blanked, so a blank title
+ * is a deleted song waiting for that cleanup. Also true when the file can't
+ * be read, so that the commit runs as it would have. */
+static bool deleted_tags_pending(void)
+{
+    char buf[TAGCACHE_BUFSZ];
+    struct tagcache_header tch;
+    struct tagfile_entry tfe;
+    bool pending = false;
+
+    int fd = open_tag_fd(&tch, tag_title, false);
+    if (fd < 0)
+        return true;
+
+    for (int i = 0; i < tch.entry_count && !pending; i++)
+    {
+        pending = read_tagfile_entry_and_tag(fd, &tfe, buf, sizeof(buf))
+                  != e_SUCCESS;
+        do_timed_yield();
+    }
+    close(fd);
+
+    return pending;
+}
+
 static bool commit(void)
 {
     struct tagcache_header tch;
@@ -3460,26 +3448,22 @@ static bool commit(void)
     }
 
     if (tch.entry_count == 0)
-    {
         logf("nothing to commit");
-#ifdef SHANLING_Q2
-        /* A scan that found nothing new would rebuild every index and count
-         * as a database update, which ages Recently Added a step at every
-         * boot. Rebuild only when there is no working database to keep, or
-         * when deleted songs still wait for the cleanup a commit does. */
-        if (check_all_headers() && !deleted_tags_pending())
-        {
-            tc_stat.ready = true;
-            tc_stat.readyvalid = true;
-            close(tmpfd);
-            remove_db_file(TAGCACHE_FILE_TEMP);
-            return true;
-        }
-#endif
-    }
 
     /* Fully initialize existing headers (if any) before going further. */
     tc_stat.ready = check_all_headers();
+
+    /* A scan that found nothing new would rebuild every index and count as
+     * a database update, which ages Recently Added a step. Rebuild only when
+     * there is no working database to keep, or when deleted songs still wait
+     * for the cleanup a commit does. */
+    if (tch.entry_count == 0 && tc_stat.ready && !deleted_tags_pending())
+    {
+        tc_stat.readyvalid = true;
+        close(tmpfd);
+        remove_db_file(TAGCACHE_FILE_TEMP);
+        return true;
+    }
 
 #ifdef HAVE_EEPROM_SETTINGS
     remove_db_file(TAGCACHE_STATEFILE);
@@ -5269,13 +5253,10 @@ commit:
     if (!ret)
     {
         logf("Aborted.");
-#ifdef SHANLING_Q2
-        /* Without dircache a full scan takes minutes, so power-off or USB
-         * often stops it. If it found nothing new, its file only made the
-         * next boot stop to commit nothing. */
+        /* A stopped scan that found nothing leaves only a header for the
+         * next boot to commit. */
         if (total_entry_count == 0)
             remove_db_file(TAGCACHE_FILE_TEMP);
-#endif
         cpu_boost(false);
         return ;
     }
