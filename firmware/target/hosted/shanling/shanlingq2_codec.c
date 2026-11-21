@@ -262,6 +262,15 @@ void audiohw_preinit(void)
     }
     if (bt_output) {
         pcm_alsa_set_playback_device(BT_DEVICE);
+        /* Taken over from the DAC (unplugged, or the headset back): off now, as
+         * on idle, since playback carries on. A fallback powers it on again. */
+        pthread_mutex_lock(&dac_mtx);
+        if (dac_on) {
+            dac_on = false;
+            dac_set(DAC_MUTE, 1);
+            dac_set(DAC_POWER, 0);
+        }
+        pthread_mutex_unlock(&dac_mtx);
         audiohw_mute(false);
         bt_status_start();
         return;

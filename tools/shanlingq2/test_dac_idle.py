@@ -348,14 +348,25 @@ int main(void)
     shanlingq2_dac_wake();
     expect_replay(1, 1, 0);
 
-    /* The DAC left on when a headset took over: off on idle, and a start stays
-     * off while Bluetooth is the output, until it falls back */
+    /* A headset taking over from the DAC powers it off at once, as idle does;
+     * a start stays off while Bluetooth is the output, and so does choosing it
+     * again; the fallback replays it all */
     bluetooth = 1;
     audiohw_preinit();
+    expect_off();
+    shanlingq2_dac_idle();
+    ticks(60 * HZ);
+    shanlingq2_dac_wake();
+    audiohw_preinit();
     no_calls();
+    bluetooth = 0;
+    audiohw_preinit();
+    expect_replay(1, 1, 0);
+    /* Off on idle, then the headset: nothing more reaches the DAC */
     shanlingq2_dac_idle();
     expires_at_30s();
-    shanlingq2_dac_wake();
+    bluetooth = 1;
+    audiohw_preinit();
     no_calls();
     bluetooth = 0;
     audiohw_preinit();
