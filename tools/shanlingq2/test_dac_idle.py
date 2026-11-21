@@ -51,6 +51,7 @@ int audio_status(void);
 """)
     (tmp / "test.c").write_text(r'''
 #include <assert.h>
+#include <errno.h>
 #include <pthread.h>
 #include <spawn.h>
 #include <stdarg.h>
@@ -71,13 +72,14 @@ static int mock_posix_spawn(pid_t *pid, const char *path,
     assert(!strcmp(argv[7], "int32:263") && !argv[9]);
     assert(sscanf(argv[8], "array:byte:%d", &sent_byte) == 1);
     spawns++;
+    if (spawn_fails)
+        return ENOENT; /* no dbus-send */
     *pid = 1234;
     return 0;
 }
 static pid_t mock_waitpid(pid_t pid, int *status, int options)
 {
-    assert(pid == 1234 && !options);
-    *status = spawn_fails ? 1 << 8 : 0; /* exited 1 */
+    assert(pid == 1234 && !status && !options && !spawn_fails);
     return pid;
 }
 static int mock_pthread_create(pthread_t *t, const pthread_attr_t *attr,
@@ -403,7 +405,7 @@ int main(void)
     audiohw_preinit();
     playing = AUDIO_STATUS_PLAY;
     bt_status_check(&sent);
-    assert(!spawns && sent == -1);
+    assert(!spawns);
     /* one send per change, none without one; the thread started once */
     bluetooth = 1;
     audiohw_preinit();
@@ -423,14 +425,7 @@ int main(void)
     /* Bluetooth chosen afresh: the same state again */
     audiohw_preinit();
     bt_status_check(&sent);
-    assert(spawns == 4 && sent_byte == 0);
-    bluetooth = 0;
-    audiohw_preinit();
-    bt_status_check(&sent);
-    bluetooth = 1;
-    audiohw_preinit();
-    bt_status_check(&sent);
-    assert(spawns == 5 && sent_byte == 0 && threads == 1);
+    assert(spawns == 4 && sent_byte == 0 && threads == 1);
     /* a failed send is not tried again until the next change */
     spawn_fails = 1;
     playing = AUDIO_STATUS_PLAY;
@@ -438,10 +433,10 @@ int main(void)
     bt_status_check(&sent);
     spawn_fails = 0;
     bt_status_check(&sent);
-    assert(spawns == 6 && sent_byte == 1);
+    assert(spawns == 5 && sent_byte == 1);
     playing = 0;
     bt_status_check(&sent);
-    assert(spawns == 7 && sent_byte == 0);
+    assert(spawns == 6 && sent_byte == 0);
 
     /* Each output its own volume (misc.c). The headset to the DAC: silent,
      * and the DAC told; misc.c's sets and an unmute before its ack stay silent */

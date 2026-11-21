@@ -143,13 +143,13 @@ static bool bt_connected(void)
 
 static volatile bool bt_again; /* a headset chosen (again): send even no change */
 
-static int bt_status_send(int status)
+static void bt_status_send(int status)
 {
     extern char **environ;
     char data[16];
     snprintf(data, sizeof data, "array:byte:%d", status);
-    /* --print-reply: its exit status is bluetoothd's answer, not just a queued
-     * message, and the reply timeout bounds the wait; the reply goes nowhere */
+    /* --print-reply: wait for bluetoothd's answer, at most the reply timeout,
+     * so one send ends before the next; the reply goes nowhere */
     char *argv[] = { "dbus-send", "--system", "--print-reply", "--reply-timeout=2000",
                      "--dest=shanling.bluez", "/shanling/bluez",
                      "shanling.bluez.NotifyChanged", "int32:263", data, NULL };
@@ -167,20 +167,16 @@ static int bt_status_send(int status)
     int err = posix_spawn(&pid, "/usr/bin/dbus-send", &fa, &attr, argv, environ);
     posix_spawn_file_actions_destroy(&fa);
     posix_spawnattr_destroy(&attr);
-    int st;
-    if (err || waitpid(pid, &st, 0) < 0)
-        return -1;
-    return WIFEXITED(st) && WEXITSTATUS(st) == 0 ? 0 : -1;
+    if (!err)
+        waitpid(pid, NULL, 0);
 }
 
 /* One look; *sent is what the headset was last told, -1 nothing. One try per
  * change: a failure waits for the next pause or play, not a retry storm. */
 static void bt_status_check(int *sent)
 {
-    if (!bt_output) {
-        *sent = -1;
+    if (!bt_output) /* a return to Bluetooth sets bt_again */
         return;
-    }
     if (bt_again) {
         bt_again = false;
         *sent = -1;
