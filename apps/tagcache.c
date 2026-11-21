@@ -4782,9 +4782,6 @@ static bool check_deleted_file_refs(bool auto_update)
     {
         int res = read_tagfile_entry_and_tag(fd, &tfe, buf, bufsz);
         processed_dir_count++;
-#ifdef SHANLING_Q2
-        yield();    /* each entry checks a file on the SD card; see check_dir */
-#endif
 
         switch (res)
         {
@@ -5051,12 +5048,7 @@ static bool check_dir(const char *dirname, int add_files)
                     sizeof (curpath) - len);
 
         processed_dir_count++;
-#ifdef SHANLING_Q2
-        /* The Q2's threads take turns on one thread and it has no dircache,
-         * so every entry here waits on the SD card. Without a yield per
-         * entry the menus stop responding for seconds after boot. */
-        yield();
-#endif
+        do_timed_yield();
         if (info.attribute & ATTR_DIRECTORY)
         {
 #ifndef SIMULATOR
@@ -5359,10 +5351,6 @@ static void tagcache_thread(void)
 {
     struct queue_event ev;
     bool check_done = false;
-#ifdef SHANLING_Q2
-    /* Let the menus settle before the boot-time auto update starts */
-    long autoupdate_after = current_tick + 30 * HZ;
-#endif
     cpu_boost(true);
     /* If the previous cache build/update was interrupted, commit
      * the changes first in foreground. */
@@ -5425,11 +5413,7 @@ static void tagcache_thread(void)
                 remove_files();
                 remove_db_file(TAGCACHE_FILE_TEMP);
                 tagcache_build();
-#ifdef SHANLING_Q2
-                /* a build asked for before the boot-time check's delay ran
-                 * out covers that check, which would walk the card again */
                 check_done = true;
-#endif
                 break;
 
             case Q_UPDATE:
@@ -5438,9 +5422,6 @@ static void tagcache_thread(void)
                 load_ramcache();
 #endif
                 check_deleted_file_refs(true);
-#ifdef SHANLING_Q2
-                check_done = true; /* as for Q_REBUILD */
-#endif
                 break ;
 
             case Q_START_SCAN:
@@ -5449,10 +5430,6 @@ static void tagcache_thread(void)
             case SYS_TIMEOUT:
                 if (check_done || !tc_stat.ready)
                     break ;
-#ifdef SHANLING_Q2
-                if (ev.id == SYS_TIMEOUT && TIME_BEFORE(current_tick, autoupdate_after))
-                    break ;
-#endif
 
 #ifdef HAVE_TC_RAMCACHE
                 if (!tc_stat.ramcache && global_settings.tagcache_ram)
