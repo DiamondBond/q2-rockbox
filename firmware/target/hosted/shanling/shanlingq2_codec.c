@@ -42,9 +42,13 @@
 #include <alsa/asoundlib.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
+#include <spawn.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include "config.h"
+#include "audio.h"
 #include "audiohw.h"
 #include "button.h"
 #include "kernel.h"
@@ -91,6 +95,101 @@ static bool bt_connected(void)
     return true;
 }
 
+/* The headset's play state. bluetoothd answers the headset's "playing?" with
+ * what Shanling's shanling.bluez NotifyChanged last set: event 0x107, one AVRCP
+ * status byte (libbtctl's btctl_notify_playback_status_changed), which stock's
+ * player sends and Rockbox didn't. AirPods send next and previous only to a
+ * source that says it plays, so every press was Play. A thread of its own
+ * sends each change of audio_status() through dbus-send, so no Rockbox thread
+ * waits on the bus. */
+#define BT_STOPPED 0
+#define BT_PLAYING 1
+#define BT_PAUSED  2
+
+static volatile bool bt_again; /* a headset chosen (again): send even no change */
+
+static int bt_status_send(int status)
+{
+    extern char **environ;
+    char data[16];
+    snprintf(data, sizeof data, "array:byte:%d", status);
+    /* --print-reply: its exit status is bluetoothd's answer, not just a queued
+     * message, and the reply timeout bounds the wait; the reply goes nowhere */
+    char *argv[] = { "dbus-send", "--system", "--print-reply", "--reply-timeout=2000",
+                     "--dest=shanling.bluez", "/shanling/bluez",
+                     "shanling.bluez.NotifyChanged", "int32:263", data, NULL };
+    posix_spawnattr_t attr;
+    posix_spawn_file_actions_t fa;
+    sigset_t none;
+    sigemptyset(&none);
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setsigmask(&attr, &none); /* this thread blocks them all */
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK);
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_adddup2(&fa, 1, 2);
+    pid_t pid;
+    int err = posix_spawn(&pid, "/usr/bin/dbus-send", &fa, &attr, argv, environ);
+    posix_spawn_file_actions_destroy(&fa);
+    posix_spawnattr_destroy(&attr);
+    int st;
+    if (err || waitpid(pid, &st, 0) < 0)
+        return -1;
+    return WIFEXITED(st) && WEXITSTATUS(st) == 0 ? 0 : -1;
+}
+
+/* One look; *sent is what the headset was last told, -1 nothing. One try per
+ * change: a failure waits for the next pause or play, not a retry storm. */
+static void bt_status_check(int *sent)
+{
+    if (!bt_output) {
+        *sent = -1;
+        return;
+    }
+    if (bt_again) {
+        bt_again = false;
+        *sent = -1;
+    }
+    int a = audio_status();
+    int status = !(a & AUDIO_STATUS_PLAY) ? BT_STOPPED :
+                 (a & AUDIO_STATUS_PAUSE) ? BT_PAUSED : BT_PLAYING;
+    if (status != *sent) {
+        bt_status_send(status);
+        *sent = status;
+    }
+}
+
+/* ponytail: wakes four times a second for as long as Rockbox runs once
+ * Bluetooth has been the output, and reports a change up to 250 ms late; wake
+ * it from the play-state changes instead if either ever matters. */
+static void *bt_status_thread(void *arg)
+{
+    (void)arg;
+    pthread_detach(pthread_self());
+    int sent = -1;
+    for (;;) {
+        usleep(250000);
+        bt_status_check(&sent);
+    }
+    return NULL;
+}
+
+/* With each Bluetooth output; the thread once, signals blocked as for
+ * Rockbox's other threads of their own */
+static void bt_status_start(void)
+{
+    static bool started;
+    bt_again = true;
+    if (started)
+        return;
+    sigset_t all, old;
+    pthread_t t;
+    sigfillset(&all);
+    pthread_sigmask(SIG_BLOCK, &all, &old);
+    started = pthread_create(&t, NULL, bt_status_thread, NULL) == 0;
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+}
+
 /* All a DAC powered off has lost, with dac_mtx held. The driver sleeps about
  * 530 ms in here (100 in HEADSET, 428 in POWER), and its last sleep plus the 10
  * jiffies it waits to unmute are settling enough, as for stock. */
@@ -115,6 +214,7 @@ void audiohw_preinit(void)
     if (bt_output) {
         pcm_alsa_set_playback_device(BT_DEVICE);
         audiohw_mute(false);
+        bt_status_start();
         return;
     }
     pcm_alsa_set_playback_device(DAC_DEVICE);

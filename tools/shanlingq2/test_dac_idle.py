@@ -36,14 +36,60 @@ int tick_add_task(void (*)(void));
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
 """)
+    (tmp / "audio.h").write_text("""
+#define AUDIO_STATUS_PLAY  1
+#define AUDIO_STATUS_PAUSE 2
+int audio_status(void);
+""")
     (tmp / "test.c").write_text(r'''
 #include <assert.h>
+#include <pthread.h>
+#include <spawn.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
+
+/* dbus-send and the headset thread: counted, never run */
+static int spawns, spawn_fails, sent_byte = -1, threads;
+static int mock_posix_spawn(pid_t *pid, const char *path,
+                            const posix_spawn_file_actions_t *fa,
+                            const posix_spawnattr_t *attr,
+                            char *const argv[], char *const envp[])
+{
+    (void)fa; (void)attr; (void)envp;
+    assert(!strcmp(path, "/usr/bin/dbus-send"));
+    assert(!strcmp(argv[6], "shanling.bluez.NotifyChanged"));
+    assert(!strcmp(argv[7], "int32:263") && !argv[9]);
+    assert(sscanf(argv[8], "array:byte:%d", &sent_byte) == 1);
+    spawns++;
+    *pid = 1234;
+    return 0;
+}
+static pid_t mock_waitpid(pid_t pid, int *status, int options)
+{
+    assert(pid == 1234 && !options);
+    *status = spawn_fails ? 1 << 8 : 0; /* exited 1 */
+    return pid;
+}
+static int mock_pthread_create(pthread_t *t, const pthread_attr_t *attr,
+                               void *(*f)(void *), void *arg)
+{
+    (void)t; (void)attr; (void)f; (void)arg;
+    threads++;
+    return 0;
+}
+#define posix_spawn mock_posix_spawn
+#define waitpid mock_waitpid
+#define pthread_create mock_pthread_create
 #define open mock_open
 #define close mock_close
 #define ioctl mock_ioctl
 #include "firmware/target/hosted/shanling/shanlingq2_codec.c"
+#undef pthread_create
+
+static int playing;
+int audio_status(void) { return playing; }
 
 volatile long current_tick;
 static void (*task)(void);
@@ -322,6 +368,52 @@ int main(void)
     ticks(60 * HZ);
     no_calls();
     assert(tasks == 1); /* the one postinit's */
+
+    /* The headset's play state: none while the DAC is the output */
+    int sent = 5;
+    phones = bluetooth = 0;
+    audiohw_preinit();
+    playing = AUDIO_STATUS_PLAY;
+    bt_status_check(&sent);
+    assert(!spawns && sent == -1);
+    /* one send per change, none without one; the thread started once */
+    bluetooth = 1;
+    audiohw_preinit();
+    assert(threads == 1);
+    bt_status_check(&sent);
+    assert(spawns == 1 && sent_byte == 1);
+    bt_status_check(&sent);
+    assert(spawns == 1);
+    playing = AUDIO_STATUS_PLAY | AUDIO_STATUS_PAUSE;
+    bt_status_check(&sent);
+    bt_status_check(&sent);
+    assert(spawns == 2 && sent_byte == 2);
+    playing = 0;
+    bt_status_check(&sent);
+    bt_status_check(&sent);
+    assert(spawns == 3 && sent_byte == 0);
+    /* Bluetooth chosen afresh: the same state again */
+    audiohw_preinit();
+    bt_status_check(&sent);
+    assert(spawns == 4 && sent_byte == 0);
+    bluetooth = 0;
+    audiohw_preinit();
+    bt_status_check(&sent);
+    bluetooth = 1;
+    audiohw_preinit();
+    bt_status_check(&sent);
+    assert(spawns == 5 && sent_byte == 0 && threads == 1);
+    /* a failed send is not tried again until the next change */
+    spawn_fails = 1;
+    playing = AUDIO_STATUS_PLAY;
+    bt_status_check(&sent);
+    bt_status_check(&sent);
+    spawn_fails = 0;
+    bt_status_check(&sent);
+    assert(spawns == 6 && sent_byte == 1);
+    playing = 0;
+    bt_status_check(&sent);
+    assert(spawns == 7 && sent_byte == 0);
     return 0;
 }
 ''')

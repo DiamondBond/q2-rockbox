@@ -24,10 +24,34 @@ int tick_add_task(void (*)(void));
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
 """)
+    (tmp / "audio.h").write_text("""
+#define AUDIO_STATUS_PLAY  1
+#define AUDIO_STATUS_PAUSE 2
+int audio_status(void);
+""")
     (tmp / "test.c").write_text(r'''
 #include <assert.h>
+#include <pthread.h>
+#include <spawn.h>
 #include <stdarg.h>
 #include <string.h>
+/* no headset thread, nothing spawned */
+static int mock_pthread_create(pthread_t *t, const pthread_attr_t *attr,
+                               void *(*f)(void *), void *arg)
+{
+    (void)t; (void)attr; (void)f; (void)arg;
+    return 0;
+}
+static int mock_posix_spawn(pid_t *pid, const char *path,
+                            const posix_spawn_file_actions_t *fa,
+                            const posix_spawnattr_t *attr,
+                            char *const argv[], char *const envp[])
+{
+    (void)pid; (void)path; (void)fa; (void)attr; (void)argv; (void)envp;
+    assert(0);
+}
+#define pthread_create mock_pthread_create
+#define posix_spawn mock_posix_spawn
 #define open mock_open
 #define close mock_close
 #define ioctl mock_ioctl
@@ -63,6 +87,7 @@ int snd_pcm_close(snd_pcm_t *pcm) { (void)pcm; return 0; }
 bool headphones_inserted(void) { return phones; }
 void pcm_alsa_set_playback_device(const char *name) { (void)name; }
 void pcm_set_mixer_volume(int left, int right) { (void)left; (void)right; }
+int audio_status(void) { return 0; }
 
 int main(void)
 {
