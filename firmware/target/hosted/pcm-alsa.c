@@ -634,6 +634,11 @@ static void *writer_main(void *arg)
             if (now && !phones && handle &&
                 strcmp(current_alsa_device, DEFAULT_PLAYBACK_DEVICE))
                 lost = true;
+            /* and unplugged while on the default device: it picks again
+             * too, so a Bluetooth headset still connected plays again */
+            if (!now && phones && handle &&
+                !strcmp(current_alsa_device, DEFAULT_PLAYBACK_DEVICE))
+                lost = true;
             phones = now;
         }
 #endif
