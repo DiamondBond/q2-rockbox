@@ -4840,6 +4840,9 @@ static bool check_deleted_file_refs(bool auto_update)
         }
 
         do_timed_yield();
+#ifndef __PCTOOL__
+        run_command_queue(false);
+#endif
     }
 
 wend_finished:
@@ -5049,6 +5052,9 @@ static bool check_dir(const char *dirname, int add_files)
 
         processed_dir_count++;
         do_timed_yield();
+#ifndef __PCTOOL__
+        run_command_queue(false);
+#endif
         if (info.attribute & ATTR_DIRECTORY)
         {
 #ifndef SIMULATOR
