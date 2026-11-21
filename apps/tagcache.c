@@ -3402,9 +3402,10 @@ static bool deleted_tags_pending(void)
  * the worst case: an index that runs short fails after the database was
  * marked dirty. build_index() builds one index at a time and needs, per
  * entry, a search entry, a lookup slot, an id list and its own up-front
- * check; then the old strings of a sorted tag file (at most all of them), a
- * lookup slot per chunk of the tag file (the filename file included), and
- * the new strings. build_numeric_indices() needs room for two temp entries.
+ * check; then the old strings of one sorted tag file (the largest, as each
+ * index starts from an empty buffer), a lookup slot per chunk of the tag
+ * file (the filename file included), and the new strings.
+ * build_numeric_indices() needs room for two temp entries.
  * Returns 0 when that is more than the commit may take. */
 static size_t commit_buffer_need(const struct tagcache_header *tmph)
 {
@@ -3428,7 +3429,7 @@ static size_t commit_buffer_need(const struct tagcache_header *tmph)
             continue;
         close(fd);
         if (TAGCACHE_IS_SORTED(tag))
-            strings += tch.datasize;
+            strings = MAX(strings, tch.datasize);
         largest = MAX(largest, tch.datasize);
     }
 
@@ -3677,6 +3678,10 @@ commit_error:
 #if defined(APPLICATION) && !defined(PLUGIN)
     if (tempbuf_malloced)
     {
+        /* ponytail: glibc raises its mmap threshold after the first free, so
+         * a later commit's buffer comes from the heap and stays resident after
+         * this free (about one commit's footprint, reused by the next). Call
+         * malloc_trim(0) here if the device ever runs short of memory. */
         free(tempbuf);
         tempbuf = NULL;
         tempbuf_size = 0;
