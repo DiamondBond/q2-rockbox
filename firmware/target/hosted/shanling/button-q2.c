@@ -35,6 +35,7 @@
 #include "kernel.h"
 #include "powermgmt.h"
 #include "shanlingq2_codec.h"
+#include "sysfs.h"
 #include "wheel-q2.h"
 
 enum { KEYS, WHEEL, AVRCP, NDEV };
@@ -65,16 +66,7 @@ static bool node_name(int i, char *name, size_t size)
 {
     char path[48];
     snprintf(path, sizeof path, "/sys/class/input/event%d/device/name", i);
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0)
-        return false;
-    ssize_t n = read(fd, name, size - 1);
-    close(fd);
-    if (n <= 0)
-        return false;
-    name[n] = '\0';
-    name[strcspn(name, "\n")] = '\0';
-    return true;
+    return sysfs_get_string(path, name, size) && name[0];
 }
 
 /* Names up to uinput's 80 bytes: BlueZ keeps " (AVRCP)" at the end of a long

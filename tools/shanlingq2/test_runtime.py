@@ -246,6 +246,8 @@ int main(int argc, char **argv) {
     subprocess.run([str(exe), str(tmp / 'value')], check=True)
     for name in ('button.h', 'backlight.h', 'kernel.h', 'powermgmt.h', 'shanlingq2_codec.h'):
         (tmp / name).write_text('')
+    (tmp / 'sysfs.h').write_text('static bool sysfs_get_string(const char *p, char *v, int n)'
+                                 ' { (void)p; (void)v; (void)n; return false; }\n')
     src.write_text(r'''
 #include <assert.h>
 #include <stdbool.h>

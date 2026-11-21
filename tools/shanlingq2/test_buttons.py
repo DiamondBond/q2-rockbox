@@ -65,7 +65,10 @@ rescans = r'''
 static long current_tick;
 static bool bt, hci0;
 static const char *nodes[16] = { "md-gpio-keys", "hyn_sliderbar", NULL, "hyn_ts" };
-static int scans, accesses, lost = -1;
+/* What sysfs says instead, when it says something else; unnamed: it can't say */
+static const char *renamed[16];
+static bool unnamed[16];
+static int scans, accesses, opens, closes, lost = -1;
 static bool shanlingq2_bt_output(void) { return bt; }
 static int mock_access(const char *path, int mode) {
     assert(!strcmp(path, "/sys/class/bluetooth/hci0") && mode == F_OK);
@@ -77,19 +80,30 @@ static void backlight_on(void) {}
 static void reset_poweroff_timer(void) {}
 static void button_queue_post(int button, int data) { (void)button; (void)data; }
 static void q2_key_tone_init(void) {}
+static bool sysfs_get_string(const char *path, char *value, int size) {
+    int i = -1;
+    sscanf(path, "/sys/class/input/event%d/device/name", &i);
+    assert(i >= 0 && i < 16);
+    if (i == 0) scans++; /* each scan asks event0 first */
+    const char *name = renamed[i] ? renamed[i] : nodes[i];
+    if (!name || unnamed[i]) return false;
+    snprintf(value, size, "%s", name);
+    return true;
+}
 static int mock_open(const char *path, int flags) {
     int i = -1;
     (void)flags;
     sscanf(path, "/dev/input/event%d", &i);
     assert(i >= 0 && i < 16);
-    if (i == 0) scans++; /* each scan tries event0 first */
-    return nodes[i] ? 100 + i : -1;
+    if (!nodes[i]) return -1;
+    opens++;
+    return 100 + i;
 }
 static int mock_ioctl(int fd, unsigned long request, void *arg) {
-    if (request == EVIOCGNAME(63)) strcpy(arg, nodes[fd - 100]);
+    if (request == EVIOCGNAME(95)) strncpy(arg, nodes[fd - 100], 95);
     return 0;
 }
-static int mock_close(int fd) { (void)fd; return 0; }
+static int mock_close(int fd) { if (fd >= 100) closes++; return 0; }
 static int mock_poll(struct pollfd *p, nfds_t n, int timeout) {
     (void)timeout;
     int hit = lost >= 0 && p[lost].fd >= 0;
@@ -127,8 +141,10 @@ int main(void) {
     lose_and_recover(WHEEL);
     /* Bluetooth output without its headset's node: a scan each second */
     bt = true; assert(scans_in(5) == 5);
-    /* The stack up, Bluetooth not the output: a scan each second too */
-    bt = false; hci0 = true; assert(scans_in(5) == 5);
+    /* The stack up, Bluetooth not the output: a scan each second too, and no
+     * node opened or closed to find there is no headset */
+    bt = false; hci0 = true;
+    opens = closes = 0; assert(scans_in(60) == 60 && opens == 0 && closes == 0);
     /* Neither: a headset's node is left alone */
     hci0 = false; nodes[AVRCP] = "AirPods Pro (AVRCP)";
     assert(scans_in(5) == 0 && fds[AVRCP].fd < 0);
@@ -139,6 +155,21 @@ int main(void) {
     hci0 = false; bt = true; lose_and_recover(AVRCP);
     /* Keys come back with the headset held too */
     bt = false; lose_and_recover(KEYS);
+    /* A name past 63 characters still ends in "(AVRCP)" */
+    hci0 = true;
+    nodes[AVRCP] = "A Headset With A Very Long Name That Goes On And On Past 63 (AVRCP)";
+    lost = AVRCP; current_tick++; button_read_device(); lost = -1;
+    assert(scans_in(1) == 1 && fds[AVRCP].fd == 102);
+    /* A node sysfs can't name is opened and asked */
+    unnamed[AVRCP] = true;
+    lost = AVRCP; current_tick++; button_read_device(); lost = -1;
+    assert(scans_in(1) == 1 && fds[AVRCP].fd == 102);
+    unnamed[AVRCP] = false;
+    /* Renamed between the sysfs read and the open: asked again, and refused */
+    renamed[AVRCP] = nodes[AVRCP]; nodes[AVRCP] = "hyn_ts";
+    lost = AVRCP; current_tick++; button_read_device(); lost = -1;
+    opens = closes = 0;
+    assert(scans_in(1) == 1 && fds[AVRCP].fd < 0 && opens == 1 && closes == 1);
     return 0;
 }
 '''
@@ -155,7 +186,7 @@ with tempfile.TemporaryDirectory() as tmp:
     c.write_text(source)
     subprocess.run(['cc', '-Wall', '-Werror', '-o', exe, c], check=True)
     subprocess.run([exe], check=True)
-    for name in ('button.h', 'backlight.h', 'kernel.h', 'powermgmt.h', 'shanlingq2_codec.h'):
+    for name in ('button.h', 'backlight.h', 'kernel.h', 'powermgmt.h', 'shanlingq2_codec.h', 'sysfs.h'):
         Path(tmp, name).write_text('')
     c.write_text(rescans)
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-I', tmp, '-I', root, '-o', exe, c],
