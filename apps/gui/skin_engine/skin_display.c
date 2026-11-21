@@ -232,6 +232,14 @@ void draw_progressbar(struct gui_wps *gwps, struct skin_viewport* skin_viewport,
         length = maxvol - minvol;
         end = global_status.volume - minvol;
 #endif
+#ifdef SHANLING_Q2
+        if (global_status.volume_on_bt)
+        {
+            /* the headset's own volume: a position on its scale, not a loudness */
+            length = maxvol - minvol;
+            end = global_status.volume - minvol;
+        }
+#endif
     }
     else if (pb->type == SKIN_TOKEN_BATTERY_PERCENTBAR)
     {

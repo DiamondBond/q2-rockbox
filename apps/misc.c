@@ -1043,6 +1043,11 @@ int get_normalized_volume(void)
 void adjust_volume(int steps)
 {
 #ifdef HAVE_PERCEPTUAL_VOLUME
+#ifdef SHANLING_Q2
+    if (global_status.volume_on_bt) /* the headset's steps are its own: one a click */
+        adjust_volume_ex(steps, VOLUME_ADJUST_DIRECT);
+    else
+#endif
     adjust_volume_ex(steps, global_settings.volume_adjust_mode);
 #else
     adjust_volume_ex(steps, VOLUME_ADJUST_DIRECT);

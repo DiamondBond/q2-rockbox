@@ -1380,6 +1380,16 @@ const char *get_token_value(struct gui_wps *gwps,
             break;
 
         case SKIN_TOKEN_VOLUME:
+#ifdef SHANLING_Q2
+            if (global_status.volume_on_bt)
+            {
+                /* the headset's own volume: its position, 0..100, as stock shows it */
+                int minvol = sound_min(SOUND_VOLUME);
+                snprintf(buf, buf_size, "%d", (global_status.volume - minvol) * 100
+                                              / (sound_max(SOUND_VOLUME) - minvol));
+            }
+            else
+#endif
             format_sound_value_ex(buf, buf_size, SOUND_VOLUME,
                                   global_status.volume, true);
 
