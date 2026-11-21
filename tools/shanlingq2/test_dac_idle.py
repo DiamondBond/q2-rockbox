@@ -13,7 +13,11 @@ def function(name):
     return source[start:source.index("\n}\n", start)]
 
 
-# The wake is sink_dma_start's first statement, the stamp sink_dma_stop's last
+# The wake is sink_dma_start's first statement, the stamp sink_dma_stop's last;
+# at a rate change the DAC catches up (the stop's mute) before the drop
+setfreq = (root / "firmware/target/hosted/pcm-alsa.c").read_text()
+setfreq = setfreq[setfreq.index("if (last_sample_rate != sampr)"):]
+assert setfreq.index("#ifdef HAVE_SHANLINGQ2_CODEC\n        shanlingq2_dac_sync(") < setfreq.index("snd_pcm_drop(handle)")
 assert "{\n#ifdef HAVE_SHANLINGQ2_CODEC\n    shanlingq2_dac_wake();\n#endif\n" in function("sink_dma_start")
 assert function("sink_dma_stop").endswith("#ifdef HAVE_SHANLINGQ2_CODEC\n    shanlingq2_dac_idle();\n#endif")
 
@@ -40,6 +44,7 @@ bool button_queue_empty(void);
 extern volatile long current_tick;
 int tick_add_task(void (*)(void));
 """)
+    (tmp / "panic.h").write_text("void panicf(const char *, ...) __attribute__((noreturn));\n")
     (tmp / "pcm-alsa.h").write_text("""
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
@@ -59,6 +64,7 @@ int audio_status(void);
 #include <string.h>
 #include <sys/wait.h>
 
+static void *dac_thread(void *); /* the one thread the tests run for real */
 /* dbus-send and the headset thread: counted, never run */
 static int spawns, spawn_fails, sent_byte = -1, threads;
 static int mock_posix_spawn(pid_t *pid, const char *path,
@@ -85,18 +91,29 @@ static pid_t mock_waitpid(pid_t pid, int *status, int options)
 static int mock_pthread_create(pthread_t *t, const pthread_attr_t *attr,
                                void *(*f)(void *), void *arg)
 {
-    (void)t; (void)attr; (void)f; (void)arg;
+    if (f == dac_thread)
+        return pthread_create(t, attr, f, arg);
     threads++;
     return 0;
 }
 #define posix_spawn mock_posix_spawn
 #define waitpid mock_waitpid
 #define pthread_create mock_pthread_create
+int mock_close(int); /* unistd.h may already be in: declared here */
 #define open mock_open
 #define close mock_close
 #define ioctl mock_ioctl
 #include "firmware/target/hosted/shanling/shanlingq2_codec.c"
 #undef pthread_create
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
+__attribute__((noreturn)) void panicf(const char *fmt, ...)
+{
+    (void)fmt;
+    abort();
+}
+static void settle(void) { assert(shanlingq2_dac_sync(2000)); }
 
 static int playing;
 int audio_status(void) { return playing; }
@@ -106,6 +123,7 @@ static void (*task)(void);
 static int tasks, bluetooth, phones, opens, mixer_calls, calls, queued;
 static int mixer_l = 1, mixer_r = 1; /* the mixer's last volume, 1: never set */
 static struct { unsigned long req; int value; } log_[32];
+static volatile int stall_us; /* the next ioctl sleeps this long: a stuck driver */
 
 int tick_add_task(void (*f)(void)) { task = f; tasks++; return 0; }
 int mock_open(const char *path, int flags, ...)
@@ -115,10 +133,16 @@ int mock_open(const char *path, int flags, ...)
     opens++;
     return 42;
 }
-int mock_close(int fd) { assert(fd == 42); return 0; }
+static int closes;
+int mock_close(int fd) { assert(fd == 42); closes++; return 0; }
 int mock_ioctl(int fd, unsigned long req, ...)
 {
     assert(fd == 42 && calls < 32);
+    if (stall_us) {
+        int us = stall_us;
+        stall_us = 0;
+        usleep(us);
+    }
     va_list args;
     va_start(args, req);
     log_[calls].req = req;
@@ -152,9 +176,10 @@ static void ticks(long n)
             task();
     }
 }
-static void no_calls(void) { assert(calls == 0); }
+static void no_calls(void) { settle(); assert(calls == 0); }
 static void expect_replay(int g, int f, int m)
 {
+    settle();
     assert(calls == 7);
     assert(log_[0].req == DAC_HEADSET && log_[0].value == 1);
     assert(log_[1].req == DAC_POWER && log_[1].value == 1);
@@ -167,6 +192,7 @@ static void expect_replay(int g, int f, int m)
 }
 static void expect_off(void)
 {
+    settle();
     assert(calls == 2);
     assert(log_[0].req == DAC_MUTE && log_[0].value == 1);
     assert(log_[1].req == DAC_POWER && log_[1].value == 0);
@@ -229,12 +255,15 @@ int main(void)
     ticks(120 * HZ);
     no_calls();
     audiohw_mute(false);
+    settle();
     assert(calls == 1 && log_[0].req == DAC_MUTE && log_[0].value == 0);
     calls = 0;
     audiohw_set_filter_roll_off(2);
+    settle();
     assert(calls == 1 && log_[0].req == DAC_FILTER && log_[0].value == 2);
     calls = 0;
     audiohw_set_power_mode(1);
+    settle();
     assert(calls == 1 && log_[0].req == DAC_GAIN && log_[0].value == 0);
     calls = 0;
 
@@ -275,9 +304,11 @@ int main(void)
     pthread_mutex_lock(&dac_mtx);
     shanlingq2_dac_idle();
     audiohw_mute(true);
+    settle(); /* the sync takes no dac_mtx either */
     assert(calls == 1 && log_[0].req == DAC_MUTE && log_[0].value == 1);
     calls = 0;
     audiohw_mute(false);
+    settle();
     calls = 0;
     ticks(10);
     no_calls();
@@ -381,9 +412,96 @@ int main(void)
     bluetooth = phones = 1;
     audiohw_preinit();
     assert(!shanlingq2_bt_output());
+    settle();
     assert(calls == 8 && log_[7].req == DAC_MUTE && log_[7].value == 0);
     calls = 7;
     expect_replay(1, 1, 1);
+
+    /* Each caller that has to wait does, with no settle: a power-on behind a
+     * slow driver is made before preinit and a wake return, and close makes
+     * the power-off before it closes the node */
+    stall_us = 200000;
+    int closed = closes;
+    audiohw_close();
+    assert(calls == 2 && log_[0].req == DAC_MUTE && log_[0].value == 1 &&
+           log_[1].req == DAC_POWER && log_[1].value == 0 && closes == closed + 1);
+    calls = 0;
+    phones = 0;
+    bluetooth = 0;
+    stall_us = 200000;
+    audiohw_preinit(); /* close left it muted: the replay, then the unmute */
+    assert(calls == 8 && log_[1].req == DAC_POWER && log_[1].value == 1 &&
+           log_[7].req == DAC_MUTE && log_[7].value == 0);
+    calls = 0;
+    shanlingq2_dac_idle();
+    ticks(30 * HZ);
+    stall_us = 200000;
+    shanlingq2_dac_wake();
+    assert(calls == 9 && log_[3].req == DAC_POWER && log_[3].value == 1);
+    calls = 0;
+    /* the DAC already on: a wake doesn't wait behind a stall */
+    struct timespec t0, t1;
+    stall_us = 1000000;
+    audiohw_mute(true);
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    shanlingq2_dac_wake();
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    assert((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 < 500);
+    settle();
+    calls = 0;
+    audiohw_mute(false);
+    settle();
+    calls = 0;
+
+    /* A close behind a stall longer than its bound leaves the node open and
+     * the queue as it is: the power-off is made once the stall ends */
+    stall_us = 1500000;
+    closed = closes;
+    audiohw_close();
+    assert(closes == closed && dac == 42);
+    settle();
+    assert(calls == 2 && log_[1].req == DAC_POWER && log_[1].value == 0);
+    calls = 0;
+    audiohw_preinit(); /* the node still open: the DAC on again */
+    settle();
+    calls = 0;
+
+    /* Marker numbers wrap without a false timeout */
+    sync_sent = sync_done = 0xfffffffeu;
+    for (int i = 0; i < 4; i++)
+        assert(shanlingq2_dac_sync(1000));
+
+    /* A stalled driver: the callers return at once, the wait is bounded, and a
+     * mute and an unmute sent during the stall both arrive, in order */
+    stall_us = 1500000;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    audiohw_mute(true);
+    audiohw_mute(false);
+    assert(!shanlingq2_dac_sync(100));
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    long waited = (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000;
+    assert(waited >= 100 && waited < 1000);
+    assert(shanlingq2_dac_sync(3000));
+    assert(calls == 2 && log_[0].req == DAC_MUTE && log_[0].value == 1 &&
+           log_[1].req == DAC_MUTE && log_[1].value == 0);
+    calls = 0;
+    /* a tick that expires behind a stall queues and returns */
+    audiohw_set_power_mode(0);
+    settle();
+    calls = 0;
+    shanlingq2_dac_idle();
+    stall_us = 1000000;
+    audiohw_set_filter_roll_off(1); /* stalls; the tick's power-off queues behind it */
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    ticks(30 * HZ);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    assert((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 < 500);
+    settle();
+    assert(calls == 3 && log_[0].req == DAC_FILTER && log_[1].req == DAC_MUTE &&
+           log_[2].req == DAC_POWER && log_[2].value == 0);
+    calls = 0;
+    shanlingq2_dac_wake();
+    expect_replay(1, 1, 0); /* mode 0 is SOUND_HIGH_POWER here: gain 1 */
 
     /* After close the tick and a stray wake stay harmless */
     audiohw_close();
@@ -491,7 +609,7 @@ int main(void)
     return 0;
 }
 ''')
-    subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", "-fsanitize=undefined",
+    subprocess.run(["cc", "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror", "-fsanitize=undefined",
                     "-pthread", f"-I{tmp}", f"-I{root}", str(tmp / "test.c"),
                     "-o", str(tmp / "test")], check=True)
     subprocess.run([str(tmp / "test")], check=True, timeout=30)

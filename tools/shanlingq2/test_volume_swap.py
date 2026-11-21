@@ -44,6 +44,7 @@ bool button_queue_empty(void);
 extern volatile long current_tick;
 int tick_add_task(void (*)(void));
 """)
+    (tmp / "panic.h").write_text("void panicf(const char *, ...) __attribute__((noreturn));\n")
     (tmp / "pcm-alsa.h").write_text("""
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
@@ -60,11 +61,14 @@ int audio_status(void);
 #include <stdlib.h>
 #include <string.h>
 
-/* The DAC and the headset thread: accepted, never run */
+static void *dac_thread(void *); /* the one thread the tests run for real */
+/* The headset thread: accepted, never run; the DAC thread for real */
 static int mock_pthread_create(pthread_t *t, const pthread_attr_t *attr,
                                void *(*f)(void *), void *arg)
 {
-    (void)t; (void)attr; (void)f; (void)arg;
+    if (f == dac_thread)
+        return pthread_create(t, attr, f, arg);
+    (void)t; (void)attr; (void)arg;
     return 0;
 }
 #define pthread_create mock_pthread_create
@@ -74,6 +78,11 @@ static int mock_pthread_create(pthread_t *t, const pthread_attr_t *attr,
 #undef pthread_create
 #undef open
 #undef ioctl
+__attribute__((noreturn)) void panicf(const char *fmt, ...)
+{
+    (void)fmt;
+    abort();
+}
 
 volatile long current_tick = 1;
 int audio_status(void) { return 0; }
@@ -236,7 +245,7 @@ int main(int argc, char **argv)
     return 0;
 }
 ''')
-    subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", "-fsanitize=undefined",
+    subprocess.run(["cc", "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror", "-fsanitize=undefined",
                     "-pthread", f"-I{tmp}", f"-I{root}", str(tmp / "test.c"),
                     "-o", str(tmp / "test")], check=True)
     for run in ("boot-wired-0", "boot-wired-1", "boot-bt-0", "boot-bt-1",

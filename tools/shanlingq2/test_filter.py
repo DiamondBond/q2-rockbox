@@ -28,6 +28,7 @@ bool button_queue_empty(void);
 extern volatile long current_tick;
 int tick_add_task(void (*)(void));
 """)
+    (tmp / "panic.h").write_text("void panicf(const char *, ...) __attribute__((noreturn));\n")
     (tmp / "pcm-alsa.h").write_text("""
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
@@ -42,11 +43,14 @@ int audio_status(void);
 #include <pthread.h>
 #include <stdarg.h>
 #include <string.h>
-/* no headset thread */
+static void *dac_thread(void *); /* the one thread the tests run for real */
+/* no headset thread; the DAC thread for real */
 static int mock_pthread_create(pthread_t *t, const pthread_attr_t *attr,
                                void *(*f)(void *), void *arg)
 {
-    (void)t; (void)attr; (void)f; (void)arg;
+    if (f == dac_thread)
+        return pthread_create(t, attr, f, arg);
+    (void)t; (void)attr; (void)arg;
     return 0;
 }
 #define pthread_create mock_pthread_create
@@ -54,6 +58,13 @@ static int mock_pthread_create(pthread_t *t, const pthread_attr_t *attr,
 #define close mock_close
 #define ioctl mock_ioctl
 #include "firmware/target/hosted/shanling/shanlingq2_codec.c"
+#include <stdlib.h>
+__attribute__((noreturn)) void panicf(const char *fmt, ...)
+{
+    (void)fmt;
+    abort();
+}
+static void settle(void) { assert(shanlingq2_dac_sync(2000)); }
 
 volatile long current_tick;
 int tick_add_task(void (*task)(void)) { (void)task; return 0; }
@@ -91,34 +102,41 @@ int audio_status(void) { return 0; }
 int main(void)
 {
     audiohw_preinit();
+    settle();
     assert(last_filter == 0 && writes == 1);
     for (int i = 0; i < 4; i++) {
         audiohw_set_filter_roll_off(i);
+        settle();
         assert(last_filter == i && writes == i + 2);
     }
     audiohw_set_filter_roll_off(-1);
     audiohw_set_filter_roll_off(4);
+    settle();
     assert(last_filter == 3 && writes == 5);
     audiohw_close();
     bluetooth = 1;
     audiohw_preinit();
     audiohw_set_filter_roll_off(2);
+    settle();
     assert(writes == 5);
     bluetooth = 0;
     audiohw_preinit();
+    settle();
     assert(last_filter == 2 && writes == 6);
     audiohw_close();
     audiohw_preinit();
+    settle();
     assert(last_filter == 2 && writes == 7);
     audiohw_close();
     /* headphones in a jack: the DAC, though Bluetooth would open */
     bluetooth = phones = 1;
     audiohw_preinit();
+    settle();
     assert(writes == 8 && !shanlingq2_bt_output());
     audiohw_close();
 }
 ''')
-    subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", f"-I{tmp}",
+    subprocess.run(["cc", "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror", "-pthread", f"-I{tmp}",
                     f"-I{root}", str(tmp / "test.c"), "-o", str(tmp / "test")],
                    check=True)
     subprocess.run([str(tmp / "test")], check=True)
