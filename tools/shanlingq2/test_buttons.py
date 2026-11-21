@@ -201,6 +201,14 @@ int main(void) {
     assert(scans_in(1) == 1 && fds[AVRCP].fd < 0 && opens == 1 && closes == 1);
     renamed[AVRCP] = NULL; nodes[AVRCP] = "AirPods Pro (AVRCP)";
     assert(scans_in(1) == 1 && fds[AVRCP].fd == 102);
+    /* Playing to wired headphones plugged in after the headset played, it
+     * goes into its case: nothing posted */
+    bt = true; tick(); bt = false; phones = true; status = AUDIO_STATUS_PLAY;
+    unplugged = 0; leave(); assert(unplugged == 0);
+    come_back(); phones = false;
+    /* Playing to the DAC, the headset never the output: nothing posted */
+    leave(); assert(unplugged == 0);
+    come_back(); reattach_pending = false; tick();
     reattaches = plugged = unplugged = 0;
 
     /* Playing to the headset, it goes into its case: unplugged, once */
