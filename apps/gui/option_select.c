@@ -591,6 +591,12 @@ bool option_screen(const struct settings_list *setting,
             pop_current_activity();
             return true;
         }
+#if defined(SHANLING_Q2) && !defined(SIMULATOR)
+        /* misc.c swapped in the new output's volume: oldvalue and the list
+         * are the other output's now, so leave (the callback sets it) */
+        else if (action == SYS_OUTPUT_CHANGED && variable == &global_status.volume)
+            done = true;
+#endif
 
         /* callback */
         if (!cb_on_select_only && function)

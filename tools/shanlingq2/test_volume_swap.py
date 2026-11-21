@@ -12,6 +12,15 @@ misc = (root / "apps/misc.c").read_text()
 start = misc.index("        case SYS_OUTPUT_CHANGED:")
 case = misc[start:misc.index("\n#endif", start)]
 
+# Sound Settings > Volume (option_screen) holds the value and list position
+# it opened with: it closes once misc.c has swapped the volume under it
+option = (root / "apps/gui/option_select.c").read_text()
+option = option[option.index("bool option_screen("):]
+option = option[:option.index("\n}\n")]
+handler = option.index("else if(default_event_handler(action) == SYS_USB_CONNECTED)")
+assert option.index("else if (action == SYS_OUTPUT_CHANGED && variable == &global_status.volume)\n"
+                    "            done = true;", handler) > handler
+
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
     (tmp / "config.h").write_text("")
