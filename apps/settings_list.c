@@ -1107,12 +1107,25 @@ static void hp_lo_select_apply(int arg)
 
 #endif /* __PCTOOL__ */
 
+#ifdef SHANLING_Q2
+/* volume is the output in use's after a reset, or a first boot without the key */
+static int volume_on_bt_default(void)
+{
+#ifdef SIMULATOR
+    return 0;
+#else
+    return shanlingq2_bt_output();
+#endif
+}
+#endif
+
 const struct settings_list settings[] = {
 /* system_status settings .resume.cfg */
     SYSTEM_STATUS_SOUND(F_NO_WRAP, volume, LANG_VOLUME, "volume", SOUND_VOLUME),
 #ifdef SHANLING_Q2
     SYSTEM_STATUS(0, parked_volume, -60, "parked volume"),
-    SYSTEM_STATUS(0, volume_on_bt, 0, "volume on bluetooth"),
+    {F_T_INT|F_DEF_ISFUNC|F_RESUMESETTING, &global_status.volume_on_bt, -1,
+        FUNCTYPE(volume_on_bt_default), "volume on bluetooth", UNUSED},
 #endif
 #ifdef HAVE_PITCHCONTROL
     SYSTEM_STATUS(F_SOUNDSETTING, resume_pitch, PITCH_SPEED_100, "pitch"),

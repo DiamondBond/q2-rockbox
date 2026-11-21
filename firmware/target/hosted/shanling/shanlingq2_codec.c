@@ -83,22 +83,30 @@ static volatile int ev_output = -1; /* 0 DAC, 1 Bluetooth; -1 none pending */
 /* The output changed: silent until Rockbox sets the volume that goes with it
  * (misc.c's setvol), not the other output's level meanwhile */
 static volatile bool vol_pending;
-static volatile bool vol_ack; /* misc.c has swapped in this output's volume */
 
-void shanlingq2_volume_ack(void)
+/* Only for the output in use: an ack for the one before leaves the silence to
+ * the event on its way */
+void shanlingq2_volume_ack(bool bt)
 {
-    vol_ack = true;
+    if (bt != bt_output)
+        return;
+    vol_pending = false;
+    if (!muted)
+        pcm_set_mixer_volume(vol[0], vol[1]);
 }
 
 bool shanlingq2_take_event(long *id, intptr_t *data)
 {
+    static long again;
     int o = __atomic_exchange_n(&ev_output, -1, __ATOMIC_ACQ_REL);
-    if (o >= 0) {
-        *id = SYS_OUTPUT_CHANGED;
-        *data = o;
-        return true;
-    }
-    return false;
+    if (o < 0 && vol_pending && button_queue_empty() && TIME_AFTER(current_tick, again))
+        o = bt_output; /* a screen dropped it (cleared the queue): again */
+    if (o < 0)
+        return false;
+    again = current_tick + HZ;
+    *id = SYS_OUTPUT_CHANGED;
+    *data = o;
+    return true;
 }
 /* DAC ioctls and dac_on, across the tick, main and writer threads. Never from
  * SIGIO, which is why audiohw_mute doesn't take it. */
@@ -343,10 +351,6 @@ void audiohw_set_frequency(int fsel)
 
 void audiohw_set_volume(int vol_l, int vol_r)
 {
-    if (vol_ack) { /* not the sets before misc.c's: the other output's level */
-        vol_ack = false;
-        vol_pending = false;
-    }
     vol[0] = vol_l;
     vol[1] = vol_r;
     if (!muted && !vol_pending)

@@ -23,8 +23,11 @@ void shanlingq2_dac_idle(void);
  * pending until it has settled on a device */
 void pcm_alsa_reattach(void);
 bool pcm_alsa_reattach_pending(void);
-/* misc.c: the volume it sets next is the chosen output's (ends the silence) */
-void shanlingq2_volume_ack(void);
+/* misc.c has set the volume of this output (Bluetooth or not): ends the silence */
+void shanlingq2_volume_ack(bool bt);
+/* to misc.c, data 1 for a Bluetooth headset, 0 the DAC: a MISC id upstream
+ * won't reach */
+#define SYS_OUTPUT_CHANGED MAKE_SYS_EVENT(SYS_EVENT_CLS_MISC, 0x51)
 /* button-q2: the latest event for the main thread (SYS_OUTPUT_CHANGED, ...), if any */
 bool shanlingq2_take_event(long *id, intptr_t *data);
 

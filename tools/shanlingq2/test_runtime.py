@@ -265,6 +265,7 @@ int main(int argc, char **argv) {
     src.write_text(r'''
 #include <assert.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <linux/input.h>
 #include <poll.h>
 #define BUTTON_SELECT 1
@@ -292,6 +293,7 @@ static void reset_poweroff_timer(void) {}
 static void button_queue_post(int button, int data) { (void)button; (void)data; }
 static void q2_key_tone_init(void) {}
 static bool shanlingq2_bt_output(void) { return false; }
+static bool shanlingq2_take_event(long *id, intptr_t *data) { (void)id; (void)data; return false; }
 #define AUDIO_STATUS_PLAY 1
 #define AUDIO_STATUS_PAUSE 2
 #define SYS_PHONE_PLUGGED 4096

@@ -43,6 +43,7 @@ rescans = r'''
 #include <fcntl.h>
 #include <poll.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -80,6 +81,7 @@ static bool headphones_inserted(void) { return phones; }
 static void pcm_alsa_reattach(void) { reattaches++; reattach_pending = true; }
 static bool pcm_alsa_reattach_pending(void) { return reattach_pending; }
 static bool shanlingq2_bt_output(void) { return bt; }
+static bool shanlingq2_take_event(long *id, intptr_t *data) { (void)id; (void)data; return false; }
 static int mock_access(const char *path, int mode) {
     assert(!strcmp(path, "/sys/class/bluetooth/hci0") && mode == F_OK);
     accesses++;

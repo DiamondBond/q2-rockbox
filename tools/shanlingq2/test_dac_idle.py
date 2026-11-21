@@ -22,13 +22,21 @@ with tempfile.TemporaryDirectory() as tmp:
     (tmp / "config.h").write_text("")
     (tmp / "audiohw.h").write_text("""
 #include <stdbool.h>
+#include <stdint.h>
 #define SOUND_HIGH_POWER 0
-void audiohw_mute(int);
+#define AUDIOHW_SETTING(...)
+#include "firmware/export/shanlingq2_codec.h"
 """)
-    (tmp / "button.h").write_text("bool headphones_inserted(void);\n")
+    (tmp / "button.h").write_text("""
+bool headphones_inserted(void);
+bool button_queue_empty(void);
+""")
     (tmp / "kernel.h").write_text("""
 #define HZ 100
 #define TIME_BEFORE(a, b) ((long)(a) - (long)(b) < 0)
+#define TIME_AFTER(a, b) TIME_BEFORE(b, a)
+#define SYS_EVENT_CLS_MISC 5
+#define MAKE_SYS_EVENT(cls, id) ((long)(1u << 31) | (long)(cls) << 28 | (id))
 extern volatile long current_tick;
 int tick_add_task(void (*)(void));
 """)
@@ -93,7 +101,8 @@ int audio_status(void) { return playing; }
 
 volatile long current_tick;
 static void (*task)(void);
-static int tasks, bluetooth, phones, opens, mixer_calls, calls;
+static int tasks, bluetooth, phones, opens, mixer_calls, calls, queued;
+static int mixer_l = 1, mixer_r = 1; /* the mixer's last volume, 1: never set */
 static struct { unsigned long req; int value; } log_[32];
 
 int tick_add_task(void (*f)(void)) { task = f; tasks++; return 0; }
@@ -123,10 +132,12 @@ int snd_pcm_open(snd_pcm_t **pcm, const char *name,
 }
 int snd_pcm_close(snd_pcm_t *pcm) { (void)pcm; return 0; }
 bool headphones_inserted(void) { return phones; }
+bool button_queue_empty(void) { return !queued; }
 void pcm_alsa_set_playback_device(const char *name) { (void)name; }
 void pcm_set_mixer_volume(int left, int right)
 {
-    (void)left; (void)right;
+    mixer_l = left;
+    mixer_r = right;
     mixer_calls++;
 }
 
@@ -184,6 +195,12 @@ int main(void)
     /* Preinit doesn't arm, postinit does: browsing with nothing played */
     audiohw_preinit();
     expect_replay(0, 0, 0);
+    /* The first choice is a change: the mixer silent, the DAC told to misc.c */
+    long id;
+    intptr_t data;
+    assert(vol_pending && mixer_l == -1000 && mixer_r == -1000);
+    assert(shanlingq2_take_event(&id, &data) && id == SYS_OUTPUT_CHANGED && data == 0);
+    assert(!shanlingq2_take_event(&id, &data));
     assert(!tasks);
     ticks(60 * HZ);
     no_calls();
@@ -414,6 +431,57 @@ int main(void)
     playing = 0;
     bt_status_check(&sent);
     assert(spawns == 7 && sent_byte == 0);
+
+    /* Each output its own volume (misc.c). The headset to the DAC: silent,
+     * and the DAC told; misc.c's sets and an unmute before its ack stay silent */
+    audiohw_mute(false);
+    bluetooth = 0;
+    current_tick += 2 * HZ;
+    audiohw_preinit();
+    calls = 0;
+    assert(shanlingq2_take_event(&id, &data) && id == SYS_OUTPUT_CHANGED && data == 0);
+    audiohw_set_volume(-400, -450);
+    audiohw_mute(true);
+    audiohw_mute(false);
+    assert(mixer_l == -1000 && mixer_r == -1000);
+    /* an ack for the headset (the change before) holds; the DAC's releases at
+     * the DAC's level */
+    shanlingq2_volume_ack(true);
+    assert(vol_pending && mixer_l == -1000);
+    shanlingq2_volume_ack(false);
+    assert(!vol_pending && mixer_l == -400 && mixer_r == -450);
+    audiohw_set_volume(-350, -350);
+    assert(mixer_l == -350);
+
+    /* Back to the headset; a screen drops the event. Not offered again while
+     * anything is queued, nor within the second, then once a second */
+    bluetooth = 1;
+    audiohw_preinit();
+    assert(vol_pending && mixer_l == -1000);
+    audiohw_set_volume(-100, -100);
+    assert(mixer_l == -1000);
+    assert(shanlingq2_take_event(&id, &data) && data == 1);
+    assert(!shanlingq2_take_event(&id, &data));
+    queued = 1;
+    ticks(3 * HZ);
+    assert(!shanlingq2_take_event(&id, &data));
+    queued = 0;
+    assert(shanlingq2_take_event(&id, &data) && id == SYS_OUTPUT_CHANGED && data == 1);
+    ticks(HZ);
+    assert(!shanlingq2_take_event(&id, &data));
+    ticks(1);
+    assert(shanlingq2_take_event(&id, &data) && data == 1);
+    shanlingq2_volume_ack(true);
+    assert(!vol_pending && mixer_l == -100);
+    ticks(3 * HZ);
+    assert(!shanlingq2_take_event(&id, &data));
+
+    /* The headset again (a rate change's reopen): nothing told, not silenced */
+    int mixed_bt = mixer_calls;
+    audiohw_preinit();
+    assert(!vol_pending && mixer_calls == mixed_bt);
+    assert(!shanlingq2_take_event(&id, &data));
+    calls = 0;
     return 0;
 }
 ''')

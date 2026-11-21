@@ -59,9 +59,6 @@
 #include "splash.h"
 #include "tagcache.h"
 #include "sound.h"
-#ifdef SHANLING_Q2
-#include "shanlingq2_codec.h"
-#endif
 #include "playlist.h"
 #include "yesno.h"
 #include "viewport.h"
@@ -798,26 +795,24 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
             resume = false;
             return SYS_CALL_HUNG_UP;
 #endif
-#ifdef SHANLING_Q2
+#if defined(SHANLING_Q2) && !defined(SIMULATOR)
         /* shanlingq2_codec chose the output: the DAC (0) or a Bluetooth
          * headset (1). Each keeps its own volume: the live one is
          * global_status.volume, the other's is parked. */
         case SYS_OUTPUT_CHANGED:
         {
             bool bt = button_get_data() != 0;
-            bool swapped = bt != (global_status.volume_on_bt != 0);
-            if (swapped)
+            if (bt != (global_status.volume_on_bt != 0))
             {
                 int keep = global_status.volume;
                 global_status.volume = global_status.parked_volume;
                 global_status.parked_volume = keep;
                 global_status.volume_on_bt = bt;
-            }
-            shanlingq2_volume_ack(); /* this set ends the codec's silence */
-            if (swapped)
                 setvol();
+            }
             else /* quietly: no volume popup, no status write */
                 sound_set_volume(global_status.volume);
+            shanlingq2_volume_ack(bt); /* its level is set: ends the codec's silence */
             return 0;
         }
 #endif

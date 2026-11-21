@@ -10,13 +10,21 @@ with tempfile.TemporaryDirectory() as tmp:
     (tmp / "config.h").write_text("")
     (tmp / "audiohw.h").write_text("""
 #include <stdbool.h>
+#include <stdint.h>
 #define SOUND_HIGH_POWER 0
-void audiohw_mute(int);
+#define AUDIOHW_SETTING(...)
+#include "firmware/export/shanlingq2_codec.h"
 """)
-    (tmp / "button.h").write_text("bool headphones_inserted(void);\n")
+    (tmp / "button.h").write_text("""
+bool headphones_inserted(void);
+bool button_queue_empty(void);
+""")
     (tmp / "kernel.h").write_text("""
 #define HZ 100
 #define TIME_BEFORE(a, b) ((long)(a) - (long)(b) < 0)
+#define TIME_AFTER(a, b) TIME_BEFORE(b, a)
+#define SYS_EVENT_CLS_MISC 5
+#define MAKE_SYS_EVENT(cls, id) ((long)(1u << 31) | (long)(cls) << 28 | (id))
 extern volatile long current_tick;
 int tick_add_task(void (*)(void));
 """)
@@ -59,6 +67,7 @@ static int mock_posix_spawn(pid_t *pid, const char *path,
 
 volatile long current_tick;
 int tick_add_task(void (*task)(void)) { (void)task; return 0; }
+bool button_queue_empty(void) { return true; }
 static int bluetooth, phones, last_filter = -1, writes;
 int mock_open(const char *path, int flags, ...)
 {
