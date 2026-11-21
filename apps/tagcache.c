@@ -4074,7 +4074,6 @@ static int parse_changelog_line(int line_n, char *buf, void *parameters)
 bool tagcache_import_changelog(void)
 {
     struct master_header myhdr;
-    struct tagcache_header tch;
     int clfd;
     long masterfd;
     char buf[2048];
@@ -4101,19 +4100,11 @@ bool tagcache_import_changelog(void)
 
     write_lock++;
 
-    filenametag_fd = open_tag_fd(&tch, tag_filename, false);
-
     fast_readline(clfd, buf, bufsz, (void *)(intptr_t)masterfd,
                   parse_changelog_line);
 
     close(clfd);
     close(masterfd);
-
-    if (filenametag_fd >= 0)
-    {
-        close(filenametag_fd);
-        filenametag_fd = -1;
-    }
 
     write_lock--;
 
