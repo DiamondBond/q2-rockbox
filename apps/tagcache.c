@@ -3396,6 +3396,66 @@ static bool deleted_tags_pending(void)
     return pending;
 }
 
+#if defined(APPLICATION) && !defined(PLUGIN)
+/* Without dircache or the RAM cache there is no buffer to borrow at runtime,
+ * so the commit waited for the boot. Take one from libc instead, sized for
+ * the worst case: an index that runs short fails after the database was
+ * marked dirty. build_index() builds one index at a time and needs, per
+ * entry, a search entry, a lookup slot, an id list and its own up-front
+ * check; then the old strings of a sorted tag file (at most all of them), a
+ * lookup slot per chunk of the tag file (the filename file included), and
+ * the new strings. build_numeric_indices() needs room for two temp entries.
+ * Returns 0 when that is more than the commit may take. */
+static size_t commit_buffer_need(const struct tagcache_header *tmph)
+{
+    struct master_header tcmh;
+    struct tagcache_header tch;
+    long entries = tmph->entry_count + 1;
+    long strings = 0, largest = 0, avail_kb = -1;
+    char line[96];
+    FILE *fp;
+
+    int fd = open_master_fd(&tcmh, false);
+    if (fd >= 0)
+    {
+        entries += tcmh.tch.entry_count;
+        close(fd);
+    }
+
+    for (int tag = 0; tag < TAG_COUNT; tag++)
+    {
+        if (TAGCACHE_IS_NUMERIC(tag) || (fd = open_tag_fd(&tch, tag, false)) < 0)
+            continue;
+        close(fd);
+        if (TAGCACHE_IS_SORTED(tag))
+            strings += tch.datasize;
+        largest = MAX(largest, tch.datasize);
+    }
+
+    size_t need = entries * (sizeof(struct tempbuf_searchidx) + sizeof(void *)
+                             + sizeof(struct tempbuf_id_list) + 8)
+                  + strings + largest / TAGFILE_ENTRY_CHUNK_LENGTH * sizeof(void *)
+                  + tmph->datasize + 16;
+    need = ALIGN_UP(MAX(need, 2 * sizeof(struct temp_file_entry)), 4);
+
+    if ((fp = fopen("/proc/meminfo", "r")) == NULL)
+        return 0;
+    while (fgets(line, sizeof(line), fp))
+    {
+        if (sscanf(line, "MemAvailable: %ld kB", &avail_kb) == 1)
+            break;
+    }
+    fclose(fp);
+
+    /* ponytail: half of MemAvailable is the calibration knob: only the pages
+     * the commit touches count, and need is already the worst case. Lower it
+     * to a quarter if a commit beside playback ever runs the system short. */
+    if (avail_kb <= 0 || need / 1024 > (size_t)avail_kb / 2)
+        return 0;
+    return need;
+}
+#endif /* APPLICATION && !PLUGIN */
+
 static bool commit(void)
 {
     struct tagcache_header tch;
@@ -3408,6 +3468,10 @@ static bool commit(void)
 #endif
 #ifdef HAVE_TC_RAMCACHE
     bool ramcache_buffer_stolen = false;
+#endif
+#if defined(APPLICATION) && !defined(PLUGIN)
+    bool tempbuf_malloced = false;
+    size_t size;
 #endif
     logf("committing tagcache");
 
@@ -3507,6 +3571,13 @@ static bool commit(void)
         tempbuf = rb->plugin_get_audio_buffer(&tempbuf_size);
         tempbuf_size &= ~0x03;
     }
+#elif defined(APPLICATION)
+    if (tempbuf_size == 0 && (size = commit_buffer_need(&tch))
+        && (tempbuf = malloc(size)))
+    {
+        tempbuf_size = size;
+        tempbuf_malloced = true;
+    }
 #endif /*defined(PLUGIN)*/
 
     /* And finally fail if there are no buffers available. */
@@ -3603,6 +3674,14 @@ static bool commit(void)
     } /*!USR_CANCEL*/
 
 commit_error:
+#if defined(APPLICATION) && !defined(PLUGIN)
+    if (tempbuf_malloced)
+    {
+        free(tempbuf);
+        tempbuf = NULL;
+        tempbuf_size = 0;
+    }
+#endif
 #ifdef HAVE_TC_RAMCACHE
     if (ramcache_buffer_stolen)
     {
