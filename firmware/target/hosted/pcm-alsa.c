@@ -560,6 +560,9 @@ static int writer_reopen(void)
     handle = NULL;
     current_alsa_device = NULL;
 
+#if defined(HAVE_ALSA_32BIT)
+    dig_vol_current_l = dig_vol_current_r = 0; /* the new device fades in from silence, not the last one's gain */
+#endif
     audiohw_preinit();
     err = snd_pcm_open(&handle, playback_dev, SND_PCM_STREAM_PLAYBACK, 0);
     if (err < 0)

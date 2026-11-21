@@ -15,6 +15,12 @@ def function(name):
     return pcm[start:pcm.index('\n}\n', start) + 2]
 
 
+# A reopened device ramps from silence: the gain the ramp starts from is reset
+# in writer_reopen, before audiohw_preinit picks the new output
+reopen = function('writer_reopen')
+reset = reopen.find('    dig_vol_current_l = dig_vol_current_r = 0;')
+assert reset != -1 and reset < reopen.index('    audiohw_preinit();')
+
 source = r'''
 #include <assert.h>
 #include <stdbool.h>
