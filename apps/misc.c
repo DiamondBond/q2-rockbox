@@ -796,12 +796,12 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
             return SYS_CALL_HUNG_UP;
 #endif
 #if defined(SHANLING_Q2) && !defined(SIMULATOR)
-        /* shanlingq2_codec chose the output: the DAC (0) or a Bluetooth
-         * headset (1). Each keeps its own volume: the live one is
-         * global_status.volume, the other's is parked. */
+        /* shanlingq2_codec chose the output. Each keeps its own volume: the
+         * live one is global_status.volume, the other's is parked. For the
+         * output in use, not the event's: a stale one is a quiet set. */
         case SYS_OUTPUT_CHANGED:
         {
-            bool bt = button_get_data() != 0;
+            bool bt = shanlingq2_bt_output();
             if (bt != (global_status.volume_on_bt != 0))
             {
                 int keep = global_status.volume;
