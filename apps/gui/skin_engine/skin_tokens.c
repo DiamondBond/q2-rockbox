@@ -1380,6 +1380,16 @@ const char *get_token_value(struct gui_wps *gwps,
             break;
 
         case SKIN_TOKEN_VOLUME:
+#if defined(SHANLING_Q2) && !defined(SIMULATOR)
+            if (shanlingq2_device_volume())
+            {
+                /* the headset's own volume: its position, 0..100, as Q2 Pod shows it */
+                int minvol = sound_min(SOUND_VOLUME);
+                snprintf(buf, buf_size, "%d", (global_status.volume - minvol) * 100
+                                              / (sound_max(SOUND_VOLUME) - minvol));
+            }
+            else
+#endif
             format_sound_value_ex(buf, buf_size, SOUND_VOLUME,
                                   global_status.volume, true);
 

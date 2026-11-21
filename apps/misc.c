@@ -1045,6 +1045,11 @@ int get_normalized_volume(void)
 void adjust_volume(int steps)
 {
 #ifdef HAVE_PERCEPTUAL_VOLUME
+#if defined(SHANLING_Q2) && !defined(SIMULATOR)
+    if (shanlingq2_device_volume()) /* a position: one step a click */
+        adjust_volume_ex(steps, VOLUME_ADJUST_DIRECT);
+    else
+#endif
     adjust_volume_ex(steps, global_settings.volume_adjust_mode);
 #else
     adjust_volume_ex(steps, VOLUME_ADJUST_DIRECT);
