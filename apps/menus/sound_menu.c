@@ -88,6 +88,9 @@ static int volume_limit_callback(int action,
 /*    SOUND MENU                   */
 MENUITEM_SETTING(volume, &global_status.volume, NULL);
 MENUITEM_SETTING(volume_limit, &global_settings.volume_limit, volume_limit_callback);
+#ifdef SHANLING_Q2
+MENUITEM_SETTING(device_volume, &global_settings.device_volume, NULL);
+#endif
 #ifdef AUDIOHW_HAVE_BASS
 MENUITEM_SETTING(bass, &global_settings.bass,
 #ifdef HAVE_SW_TONE_CONTROLS
@@ -234,6 +237,9 @@ static int timestretch_callback(int action,
 MAKE_MENU(sound_settings, ID2P(LANG_SOUND_SETTINGS), NULL, Icon_Audio,
           &volume
           ,&volume_limit
+#ifdef SHANLING_Q2
+          ,&device_volume
+#endif
 #ifdef AUDIOHW_HAVE_BASS
           ,&bass
 #endif

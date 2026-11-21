@@ -913,6 +913,10 @@ struct user_settings
     int play_frequency; /* core audio output frequency selection */
 #endif
     int volume_limit; /* maximum volume limit */
+#ifdef SHANLING_Q2
+    bool device_volume; /* Control Device Volume: a Bluetooth headset's own
+                           volume is Rockbox's (shanlingq2_codec.c) */
+#endif
 
 #ifdef HAVE_PERCEPTUAL_VOLUME
     int volume_adjust_mode;

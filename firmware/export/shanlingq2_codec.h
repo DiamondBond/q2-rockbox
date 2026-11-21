@@ -28,6 +28,11 @@ void shanlingq2_volume_ack(bool bt);
 /* to misc.c, which acts for the output in use (data 1 for a Bluetooth
  * headset, 0 the DAC): a MISC id upstream won't reach */
 #define SYS_OUTPUT_CHANGED MAKE_SYS_EVENT(SYS_EVENT_CLS_MISC, 0x51)
+/* Sound Settings' Control Device Volume: Rockbox's volume sets a Bluetooth
+ * headset's own; and whether the headset carries it now (the skin then shows
+ * its position) */
+void shanlingq2_set_device_volume(bool on);
+bool shanlingq2_device_volume(void);
 /* button-q2: the latest event for the main thread (SYS_OUTPUT_CHANGED, ...), if any */
 bool shanlingq2_take_event(long *id, intptr_t *data);
 

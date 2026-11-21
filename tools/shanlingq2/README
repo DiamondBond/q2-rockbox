@@ -82,7 +82,38 @@ and comes back (unplugged, then plugged in), when Rockbox started on Bluetooth.
 Rockbox reports playing, paused or stopped to the headset, so that headsets
 which send next and previous only to a playing source (AirPods) do so.
 Rockbox's volume is its software volume in either case, each output keeping
-its own level (one with none saved yet starts at -60 dB). A plugin that does
+its own level (one with none saved yet starts at -60 dB), unless Control
+Device Volume is on.
+
+Sound Settings > Control Device Volume (off by default, named as Q2 Pod's
+switch): on, while a headset with absolute volume is the output, Rockbox's
+volume is the headset's own, as on a phone. The wheel sets the headset's
+level, the headset's keys or a car's knob move Rockbox's number, and the
+volume shows as the headset's position, 0 to 100 (-100..0 dB read as
+0..100 %), its bar filling evenly; the mixer keeps only the balance. Off,
+nothing of it runs and the headset is never read or written. It goes through
+BlueZ's MediaTransport1 Volume (dbus-send), the property Q2 Pod's own switch
+sets, not bluealsa's volume control, which on the Q2 is bluealsa's software
+gain and never reaches the headset.
+Taking a headset (at connect, after wired, at boot, or switching the setting
+on) never raises it: Rockbox's level is written, or the headset's own if that
+is lower, which Rockbox's number then shows. Rockbox's software volume stays on
+until the headset has read back at that level (about 1.5 s), and comes back
+whenever it doesn't, or the headset or BlueZ goes away. For 10 s after a take,
+a higher level the headset reports is written over, not followed: Q2 Pod's
+hand-over leaves it at its maximum, and that report can arrive late.
+Switching the setting off puts the software volume back at once and leaves the
+headset where it is.
+Limits: a device with no absolute volume, two connected at once, or one that
+keeps contradicting the Q2's writes stays on the software volume (after ten
+tries, until it is chosen again or the setting is switched). The headset's
+keys reach Rockbox's number within a second or two, not at once. Turning the
+setting on reads the Bluetooth level as a position, so -30 dB becomes 70 %;
+if the headset was quieter than that, it stays where it was. Volume Limit
+holds on the headset's keys too. A headset raised by its own keys in the
+first 10 s is pulled back once. Rockbox leaves the headset at its last level
+when it exits; Q2 Pod with its own switch on sets it again.
+A plugin that does
 not pass system events on (Doom) stays silent after the output changes until
 it is left. bluealsa is Q2 Pod's patched one, which offers AAC at 48 kHz only
 (AirPods; see q2-pod's docs/internals.md, Bluetooth AAC).
@@ -210,6 +241,7 @@ Run from the repository root:
     python3 tools/shanlingq2/test_keymap.py
     python3 tools/shanlingq2/test_launcher.py
     python3 tools/shanlingq2/test_volume_swap.py
+    python3 tools/shanlingq2/test_device_volume.py
     cc tools/shanlingq2/test_wheel.c -o /tmp/q2-wheel && /tmp/q2-wheel
 
 These exercise actual C functions with mocked hardware/ALSA boundaries. The
