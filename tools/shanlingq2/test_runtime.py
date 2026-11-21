@@ -40,7 +40,7 @@ static sample_t *frames;
 static const int channels = 2;
 static snd_pcm_sframes_t period_size = 4, pending_frames, frame_offset;
 static unsigned xruns;
-static bool writer_run, dma_playing;
+static bool writer_run, dma_playing, reattach_wanted;
 static pthread_mutex_t pcm_mtx = PTHREAD_MUTEX_INITIALIZER;
 static int copied, calls, script[8], count, at, output[32], written;
 static int state, start_error, reopened;
@@ -150,6 +150,9 @@ int main(void) {
     writer_run = true; loops = 60;
     writer_main(NULL); assert(!reopened);
     current_alsa_device = DEFAULT_PLAYBACK_DEVICE; phones_in = false; unplug_at = 0;
+    /* A headset back: one pass reopens once and settles the request */
+    reopened = 0; reattach_wanted = true; writer_run = true; loops = 1;
+    writer_main(NULL); assert(reopened == 1 && !reattach_wanted);
     /* ALSA can start itself at the write threshold while priming. Each
      * skip/selection must still unmute, just as an explicit start does. */
     for (int automatic = 0; automatic < 2; automatic++) {
@@ -254,7 +257,8 @@ int main(int argc, char **argv) {
                     str(root / 'firmware/target/hosted'), str(src),
                     str(root / 'firmware/target/hosted/sysfs.c'), '-o', str(exe)], check=True)
     subprocess.run([str(exe), str(tmp / 'value')], check=True)
-    for name in ('button.h', 'backlight.h', 'kernel.h', 'powermgmt.h', 'shanlingq2_codec.h'):
+    for name in ('button.h', 'audio.h', 'backlight.h', 'kernel.h', 'powermgmt.h',
+                 'shanlingq2_codec.h'):
         (tmp / name).write_text('')
     (tmp / 'sysfs.h').write_text('static bool sysfs_get_string(const char *p, char *v, int n)'
                                  ' { (void)p; (void)v; (void)n; return false; }\n')
@@ -288,6 +292,14 @@ static void reset_poweroff_timer(void) {}
 static void button_queue_post(int button, int data) { (void)button; (void)data; }
 static void q2_key_tone_init(void) {}
 static bool shanlingq2_bt_output(void) { return false; }
+#define AUDIO_STATUS_PLAY 1
+#define AUDIO_STATUS_PAUSE 2
+#define SYS_PHONE_PLUGGED 4096
+#define SYS_PHONE_UNPLUGGED 8192
+static int audio_status(void) { return 0; }
+static bool headphones_inserted(void) { return false; }
+static void pcm_alsa_reattach(void) {}
+static bool pcm_alsa_reattach_pending(void) { return false; }
 #include "firmware/target/hosted/shanling/button-q2.c"
 static int mode, polled, closed;
 int mock_poll(struct pollfd *p, nfds_t n, int timeout) {

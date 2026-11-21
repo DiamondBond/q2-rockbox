@@ -69,6 +69,16 @@ static const char *nodes[16] = { "md-gpio-keys", "hyn_sliderbar", NULL, "hyn_ts"
 static const char *renamed[16];
 static bool unnamed[16];
 static int scans, accesses, opens, closes, lost = -1;
+static bool phones, reattach_pending;
+static int status, reattaches, plugged, unplugged;
+#define AUDIO_STATUS_PLAY 1
+#define AUDIO_STATUS_PAUSE 2
+#define SYS_PHONE_PLUGGED 4096
+#define SYS_PHONE_UNPLUGGED 8192
+static int audio_status(void) { return status; }
+static bool headphones_inserted(void) { return phones; }
+static void pcm_alsa_reattach(void) { reattaches++; reattach_pending = true; }
+static bool pcm_alsa_reattach_pending(void) { return reattach_pending; }
 static bool shanlingq2_bt_output(void) { return bt; }
 static int mock_access(const char *path, int mode) {
     assert(!strcmp(path, "/sys/class/bluetooth/hci0") && mode == F_OK);
@@ -78,7 +88,11 @@ static int mock_access(const char *path, int mode) {
 static bool is_backlight_on(bool ignored) { (void)ignored; return true; }
 static void backlight_on(void) {}
 static void reset_poweroff_timer(void) {}
-static void button_queue_post(int button, int data) { (void)button; (void)data; }
+static void button_queue_post(int button, int data) {
+    (void)data;
+    plugged += button == SYS_PHONE_PLUGGED;
+    unplugged += button == SYS_PHONE_UNPLUGGED;
+}
 static void q2_key_tone_init(void) {}
 static bool sysfs_get_string(const char *path, char *value, int size) {
     int i = -1;
@@ -122,6 +136,18 @@ static int scans_in(int seconds) {
     for (int i = 0; i < seconds * (HZ + 1); i++) { current_tick++; button_read_device(); }
     return scans - before;
 }
+static void tick(void) { current_tick++; button_read_device(); }
+/* The headset's node goes, or comes back on the next scan */
+static void leave(void) {
+    tick(); /* sees it as the output first */
+    nodes[AVRCP] = NULL;
+    lost = AVRCP; tick(); lost = -1;
+    assert(fds[AVRCP].fd < 0);
+}
+static void come_back(void) {
+    nodes[AVRCP] = "AirPods Pro (AVRCP)";
+    assert(scans_in(1) == 1 && fds[AVRCP].fd == 102);
+}
 /* d's node goes: a scan each second until it is back, then none */
 static void lose_and_recover(int d) {
     const char *node = nodes[d];
@@ -150,6 +176,7 @@ int main(void) {
     assert(scans_in(5) == 0 && fds[AVRCP].fd < 0);
     /* Connected with the wires in, then unplugged: bt_output stays false */
     hci0 = true; assert(scans_in(1) == 1 && fds[AVRCP].fd == 102 && scans_in(5) == 0);
+    assert(!reattaches); /* its first appearance: it already plays */
     /* Drops and reconnects after the fallback to the DAC, or on Bluetooth output */
     lose_and_recover(AVRCP);
     hci0 = false; bt = true; lose_and_recover(AVRCP);
@@ -170,6 +197,31 @@ int main(void) {
     lost = AVRCP; current_tick++; button_read_device(); lost = -1;
     opens = closes = 0;
     assert(scans_in(1) == 1 && fds[AVRCP].fd < 0 && opens == 1 && closes == 1);
+    renamed[AVRCP] = NULL; nodes[AVRCP] = "AirPods Pro (AVRCP)";
+    assert(scans_in(1) == 1 && fds[AVRCP].fd == 102);
+    reattaches = plugged = unplugged = 0;
+
+    /* Playing to the headset, it goes into its case: unplugged, once */
+    bt = true; status = AUDIO_STATUS_PLAY;
+    leave(); assert(unplugged == 1 && scans_in(3) == 3 && unplugged == 1 && !plugged);
+    /* the writer falls back to the DAC; back with no headphones: one reattach,
+     * plugged in only once the writer has chosen, and only on Bluetooth */
+    bt = false; status = AUDIO_STATUS_PAUSE | AUDIO_STATUS_PLAY;
+    come_back(); assert(reattaches == 1 && !plugged && scans_in(2) == 0 && !plugged);
+    reattach_pending = false; bt = true; tick(); assert(plugged == 1);
+    assert(scans_in(5) == 0 && reattaches == 1 && plugged == 1 && unplugged == 1);
+    /* the same, but the writer lands on the DAC: nothing is plugged in */
+    status = AUDIO_STATUS_PLAY; leave(); assert(unplugged == 2);
+    bt = false; come_back(); assert(reattaches == 2);
+    reattach_pending = false; tick(); bt = true; tick(); assert(plugged == 1);
+    /* Paused when it goes: nothing posted, then or on its return */
+    status = AUDIO_STATUS_PLAY | AUDIO_STATUS_PAUSE;
+    leave(); come_back(); reattach_pending = false; tick();
+    assert(unplugged == 2 && plugged == 1 && reattaches == 3);
+    /* Back with headphones in: no reattach, nothing plugged in */
+    status = AUDIO_STATUS_PLAY; leave(); assert(unplugged == 3);
+    bt = false; phones = true;
+    come_back(); tick(); assert(reattaches == 3 && plugged == 1 && unplugged == 3);
     return 0;
 }
 '''
@@ -186,7 +238,8 @@ with tempfile.TemporaryDirectory() as tmp:
     c.write_text(source)
     subprocess.run(['cc', '-Wall', '-Werror', '-o', exe, c], check=True)
     subprocess.run([exe], check=True)
-    for name in ('button.h', 'backlight.h', 'kernel.h', 'powermgmt.h', 'shanlingq2_codec.h', 'sysfs.h'):
+    for name in ('button.h', 'backlight.h', 'kernel.h', 'powermgmt.h', 'shanlingq2_codec.h', 'sysfs.h',
+                 'audio.h'):
         Path(tmp, name).write_text('')
     c.write_text(rescans)
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-I', tmp, '-I', root, '-o', exe, c],

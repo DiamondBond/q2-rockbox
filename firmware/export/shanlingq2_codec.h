@@ -19,5 +19,9 @@ bool shanlingq2_bt_output(void);
 /* pcm-alsa: playback is about to start, or has stopped (maybe in SIGIO) */
 void shanlingq2_dac_wake(void);
 void shanlingq2_dac_idle(void);
+/* pcm-alsa: a Bluetooth headset is back, so the writer opens the PCM again;
+ * pending until it has settled on a device */
+void pcm_alsa_reattach(void);
+bool pcm_alsa_reattach_pending(void);
 
 #endif

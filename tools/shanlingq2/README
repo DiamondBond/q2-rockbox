@@ -77,6 +77,8 @@ DAC left off; otherwise it is the DAC, as before. A cold boot has no bluealsa
 daemon, so the probe fails at once. The bluealsa PCM is an ioplug, which has no
 async callback, so pcm-alsa feeds it from a writer thread. If the headset goes
 away, the writer reopens on whatever audiohw_preinit then picks, the DAC.
+Pause on Headphone Unplug also applies when the headset leaves while playing
+and comes back (unplugged, then plugged in), when Rockbox started on Bluetooth.
 Rockbox's volume is its software volume in either case. bluealsa is Q2 Pod's
 patched one, which offers AAC at 48 kHz only (AirPods; see q2-pod's
 docs/internals.md, Bluetooth AAC).

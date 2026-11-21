@@ -32,10 +32,6 @@ void pcm_set_mixer_volume(int vol_db_l, int vol_db_r);
 
 /* These two should be invoked in your audiohw_preinit() call! */
 void pcm_alsa_set_playback_device(const char *device);
-/* A Bluetooth headset is back: the writer opens the PCM again; pending until
- * it has settled on a device */
-void pcm_alsa_reattach(void);
-bool pcm_alsa_reattach_pending(void);
 #if defined(HAVE_RECORDING)
 void pcm_alsa_set_capture_device(const char *device);
 #endif

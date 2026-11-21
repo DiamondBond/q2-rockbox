@@ -34,7 +34,6 @@
 #include "audio.h"
 #include "backlight.h"
 #include "kernel.h"
-#include "pcm-alsa.h"
 #include "powermgmt.h"
 #include "shanlingq2_codec.h"
 #include "sysfs.h"
@@ -180,7 +179,9 @@ int button_read_device(void)
             bool headset = fds[AVRCP].fd >= 0;
             open_devices();
             /* a headset back is on a new transport; headphones in keep the DAC.
-             * Not the first time its input shows: that headset already plays */
+             * Not the first time its input shows: that headset already plays.
+             * ponytail: one try, so a headset whose PCM appears after its
+             * AVRCP input stays on the DAC; retry for a few seconds if one does */
             if (!headset && fds[AVRCP].fd >= 0) {
                 if (bt_left && !headphones_inserted())
                     pcm_alsa_reattach();
