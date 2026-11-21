@@ -19,5 +19,9 @@ bool shanlingq2_bt_output(void);
 /* pcm-alsa: playback is about to start, or has stopped (maybe in SIGIO) */
 void shanlingq2_dac_wake(void);
 void shanlingq2_dac_idle(void);
+/* misc.c: the volume it sets next is the chosen output's (ends the silence) */
+void shanlingq2_volume_ack(void);
+/* button-q2: the latest event for the main thread (SYS_OUTPUT_CHANGED, ...), if any */
+bool shanlingq2_take_event(long *id, intptr_t *data);
 
 #endif

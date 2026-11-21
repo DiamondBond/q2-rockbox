@@ -146,6 +146,13 @@ int button_read_device(void)
             open_devices();
     }
 
+    /* shanlingq2_codec's events for the main thread, posted here as the keys
+     * are: Rockbox's queues aren't for its other threads */
+    long ev_id;
+    intptr_t ev_data;
+    while (shanlingq2_take_event(&ev_id, &ev_data))
+        button_queue_post(ev_id, ev_data);
+
     while (poll(fds, NDEV, 0) > 0) {
         for (int d = 0; d < NDEV; d++) {
             if (fds[d].revents & (POLLERR | POLLHUP | POLLNVAL)) {

@@ -42,6 +42,7 @@
 #include <alsa/asoundlib.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include "config.h"
@@ -69,6 +70,32 @@ static int filter = 0;
 static int muted = -1;
 static int vol[2] = { -1000, -1000 }; /* silent until Rockbox sets its volume */
 static bool bt_output;
+
+/* An event for Rockbox's main thread (misc.c): the output chosen, the latest
+ * value. Rockbox's queues aren't for its other threads, so the tick thread's
+ * button_read_device posts it, as it posts the keys. Only the newest matters,
+ * so one slot, and a slow tick can't lose the newest. */
+static volatile int ev_output = -1; /* 0 DAC, 1 Bluetooth; -1 none pending */
+/* The output changed: silent until Rockbox sets the volume that goes with it
+ * (misc.c's setvol), not the other output's level meanwhile */
+static volatile bool vol_pending;
+static volatile bool vol_ack; /* misc.c has swapped in this output's volume */
+
+void shanlingq2_volume_ack(void)
+{
+    vol_ack = true;
+}
+
+bool shanlingq2_take_event(long *id, intptr_t *data)
+{
+    int o = __atomic_exchange_n(&ev_output, -1, __ATOMIC_ACQ_REL);
+    if (o >= 0) {
+        *id = SYS_OUTPUT_CHANGED;
+        *data = o;
+        return true;
+    }
+    return false;
+}
 /* DAC ioctls and dac_on, across the tick, main and writer threads. Never from
  * SIGIO, which is why audiohw_mute doesn't take it. */
 static pthread_mutex_t dac_mtx = PTHREAD_MUTEX_INITIALIZER;
@@ -111,7 +138,21 @@ static void dac_power_on(void)
  * lost, to choose the device again */
 void audiohw_preinit(void)
 {
-    bt_output = !headphones_inserted() && bt_connected();
+    bool bt = !headphones_inserted() && bt_connected();
+    static int was_bt = -1; /* the kind chosen last time; the first counts as a change */
+    bool changed = (int)bt != was_bt;
+    if (changed) {
+        was_bt = bt;
+        vol_pending = true; /* before bt_output: the other output's level stays off this one */
+        pcm_set_mixer_volume(-1000, -1000);
+    }
+    bt_output = bt;
+    if (changed) {
+        /* misc.c swaps in this output's volume and sets it, which ends the silence.
+         * Not on every preinit: a bluealsa rate change reopens too, and each set
+         * is a volume popup and a status write. Last: the set relies on bt_output */
+        __atomic_store_n(&ev_output, bt, __ATOMIC_RELEASE);
+    }
     if (bt_output) {
         pcm_alsa_set_playback_device(BT_DEVICE);
         audiohw_mute(false);
@@ -202,9 +243,13 @@ void audiohw_set_frequency(int fsel)
 
 void audiohw_set_volume(int vol_l, int vol_r)
 {
+    if (vol_ack) { /* not the sets before misc.c's: the other output's level */
+        vol_ack = false;
+        vol_pending = false;
+    }
     vol[0] = vol_l;
     vol[1] = vol_r;
-    if (!muted)
+    if (!muted && !vol_pending)
         pcm_set_mixer_volume(vol_l, vol_r);
 }
 
@@ -218,7 +263,7 @@ void audiohw_mute(int mute)
      * until the stop that follows this. */
     if (dac_on)
         dac_set(DAC_MUTE, mute ? 1 : 0);
-    if (mute)
+    if (mute || vol_pending)
         pcm_set_mixer_volume(-1000, -1000); /* tenths of a dB */
     else
         pcm_set_mixer_volume(vol[0], vol[1]);
