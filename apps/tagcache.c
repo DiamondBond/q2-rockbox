@@ -3678,10 +3678,6 @@ commit_error:
 #if defined(APPLICATION) && !defined(PLUGIN)
     if (tempbuf_malloced)
     {
-        /* ponytail: glibc raises its mmap threshold after the first free, so
-         * a later commit's buffer comes from the heap and stays resident after
-         * this free (about one commit's footprint, reused by the next). Call
-         * malloc_trim(0) here if the device ever runs short of memory. */
         free(tempbuf);
         tempbuf = NULL;
         tempbuf_size = 0;

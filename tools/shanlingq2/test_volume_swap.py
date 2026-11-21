@@ -56,49 +56,29 @@ int audio_status(void);
     (tmp / "test.c").write_text(r'''
 #include <assert.h>
 #include <pthread.h>
-#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
 
-/* The DAC, dbus-send and the headset thread: accepted, never run */
-static int mock_posix_spawn(pid_t *pid, const char *path,
-                            const posix_spawn_file_actions_t *fa,
-                            const posix_spawnattr_t *attr,
-                            char *const argv[], char *const envp[])
-{
-    (void)pid; (void)path; (void)fa; (void)attr; (void)argv; (void)envp;
-    return 1;
-}
-static pid_t mock_waitpid(pid_t pid, int *status, int options)
-{
-    (void)status; (void)options;
-    return pid;
-}
+/* The DAC and the headset thread: accepted, never run */
 static int mock_pthread_create(pthread_t *t, const pthread_attr_t *attr,
                                void *(*f)(void *), void *arg)
 {
     (void)t; (void)attr; (void)f; (void)arg;
     return 0;
 }
-#define posix_spawn mock_posix_spawn
-#define waitpid mock_waitpid
 #define pthread_create mock_pthread_create
 #define open mock_open
-#define close mock_close
 #define ioctl mock_ioctl
 #include "firmware/target/hosted/shanling/shanlingq2_codec.c"
 #undef pthread_create
 #undef open
-#undef close
 #undef ioctl
 
 volatile long current_tick = 1;
 int audio_status(void) { return 0; }
 int tick_add_task(void (*f)(void)) { (void)f; return 0; }
 int mock_open(const char *path, int flags, ...) { (void)path; (void)flags; return 42; }
-int mock_close(int fd) { (void)fd; return 0; }
 int mock_ioctl(int fd, unsigned long req, ...) { (void)fd; (void)req; return 0; }
 
 /* The outputs: wired headphones in, a headset bluez-alsa has a PCM for */
@@ -127,17 +107,12 @@ void pcm_set_mixer_volume(int left, int right)
 }
 
 /* Rockbox's side: the button queue, global_status, sound.c and setvol */
-static struct { long id; intptr_t data; } queue[16];
-static int queued, button_data;
+static long queue[16];
+static int queued;
 bool button_queue_empty(void) { return !queued; }
-intptr_t button_get_data(void) { return button_data; }
 static struct { int volume, parked_volume, volume_on_bt; } global_status;
 void sound_set_volume(int value)
 {
-    if (value < -100)
-        value = -100;
-    if (value > 0)
-        value = 0;
     global_status.volume = value;
     audiohw_set_volume(value * 10, value * 10); /* dB to tenths, as sound.c */
 }
@@ -159,16 +134,14 @@ static void tick(void)
     current_tick++;
     while (shanlingq2_take_event(&id, &data)) {
         assert(queued < 16);
-        queue[queued].id = id;
-        queue[queued++].data = data;
+        queue[queued++] = id;
     }
 }
 /* The main thread takes every queued event */
 static void deliver(void)
 {
     for (int i = 0; i < queued; i++) {
-        assert(queue[i].id == SYS_OUTPUT_CHANGED);
-        button_data = queue[i].data;
+        assert(queue[i] == SYS_OUTPUT_CHANGED);
         assert(output_changed() == 0);
     }
     queued = 0;
