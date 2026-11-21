@@ -1110,6 +1110,10 @@ static void hp_lo_select_apply(int arg)
 const struct settings_list settings[] = {
 /* system_status settings .resume.cfg */
     SYSTEM_STATUS_SOUND(F_NO_WRAP, volume, LANG_VOLUME, "volume", SOUND_VOLUME),
+#ifdef SHANLING_Q2
+    SYSTEM_STATUS(0, parked_volume, -60, "parked volume"),
+    SYSTEM_STATUS(0, volume_on_bt, 0, "volume on bluetooth"),
+#endif
 #ifdef HAVE_PITCHCONTROL
     SYSTEM_STATUS(F_SOUNDSETTING, resume_pitch, PITCH_SPEED_100, "pitch"),
     SYSTEM_STATUS(F_SOUNDSETTING, resume_speed, PITCH_SPEED_100, "speed"),

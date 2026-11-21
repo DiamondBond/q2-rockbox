@@ -337,6 +337,11 @@ const char* setting_get_cfgvals(const struct settings_list *setting);
 struct system_status
 {
     int volume;     /* audio output volume in decibels range depends on the dac */
+#ifdef SHANLING_Q2
+    int parked_volume; /* the other output's: a Bluetooth headset's while the DAC
+                          plays, the DAC's while the headset does (misc.c) */
+    int volume_on_bt;  /* volume is the headset's */
+#endif
     int resume_index;  /* index in playlist (-1 for no active resume) */
     uint32_t resume_crc32; /* crc32 of the name of the file */
     uint32_t resume_elapsed; /* elapsed time in last file */

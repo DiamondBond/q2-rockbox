@@ -23,5 +23,9 @@ void shanlingq2_dac_idle(void);
  * pending until it has settled on a device */
 void pcm_alsa_reattach(void);
 bool pcm_alsa_reattach_pending(void);
+/* misc.c: the volume it sets next is the chosen output's (ends the silence) */
+void shanlingq2_volume_ack(void);
+/* button-q2: the latest event for the main thread (SYS_OUTPUT_CHANGED, ...), if any */
+bool shanlingq2_take_event(long *id, intptr_t *data);
 
 #endif
