@@ -82,9 +82,10 @@ and comes back (unplugged, then plugged in), when Rockbox started on Bluetooth.
 Rockbox reports playing, paused or stopped to the headset, so that headsets
 which send next and previous only to a playing source (AirPods) do so.
 Rockbox's volume is its software volume in either case, each output keeping
-its own level (one with none saved yet starts at -60 dB). bluealsa is Q2 Pod's
-patched one, which offers AAC at 48 kHz only (AirPods; see q2-pod's
-docs/internals.md, Bluetooth AAC).
+its own level (one with none saved yet starts at -60 dB). A plugin that does
+not pass system events on (Doom) stays silent after the output changes until
+it is left. bluealsa is Q2 Pod's patched one, which offers AAC at 48 kHz only
+(AirPods; see q2-pod's docs/internals.md, Bluetooth AAC).
 
 Platform (reverse engineered from stock V1.32 demo)
 ---------------------------------------------------
