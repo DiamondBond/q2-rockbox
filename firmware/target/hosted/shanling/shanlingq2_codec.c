@@ -104,12 +104,12 @@ static volatile bool dev_zero; /* switched on while Rockbox runs: its Bluetooth 
  * may still be heard) */
 static void mixer_level(void)
 {
-    int m = MAX(vol[0], vol[1]);
+    int l = vol[0], r = vol[1], m = MAX(l, r); /* once: main may set them meanwhile */
     if (!__atomic_load_n(&dev_ctl, __ATOMIC_SEQ_CST) || !dev_link || m <= -1000) {
-        pcm_set_mixer_volume(vol[0], vol[1]);
+        pcm_set_mixer_volume(l, r);
         return;
     }
-    pcm_set_mixer_volume(vol[0] - m, vol[1] - m);
+    pcm_set_mixer_volume(l - m, r - m);
     /* audiohw_preinit may have chosen again meanwhile (it sets vol_pending,
      * then silences): never the headset's balance on what follows */
     if (__atomic_load_n(&vol_pending, __ATOMIC_SEQ_CST))
@@ -361,12 +361,13 @@ static void bt_status_check(int *sent)
  * Never louder by surprise. The mixer keeps the volume until a read-back
  * confirms the headset at Rockbox's level, and gets it back at every doubt. A
  * take never raises the headset: it is written to Rockbox's level or left
- * lower, and then Rockbox's number follows it down; switched on while Rockbox
+ * lower, and then Rockbox's number follows it; switched on while Rockbox
  * runs, it is written 0, as Rockbox's level was a dB. A raise the headset
  * reports in the first DEV_GUARD after a take is written over, twice at most,
  * not followed: Q2 Pod's hand-over raises it to its maximum, and that report can
- * come after ours. A number posted to misc.c is acted on only once misc.c has
- * set it (shanlingq2_volume_set), so a lost post is never taken for the wheel. */
+ * come after ours. Rockbox's number is written as the wheel's only once misc.c
+ * has set the one posted (shanlingq2_volume_set), so a lost post is never
+ * taken for the wheel. */
 #define DEV_SETTLE (3 * HZ / 2) /* a write's answer, and the hand-over's late one */
 #define DEV_GUARD  (10 * HZ)
 #define DEV_TRIES  10           /* takes a headset gets, about one a second */
@@ -507,8 +508,8 @@ enum { DEV_TAKE, DEV_WROTE, DEV_CTL };
 
 /* One look, from bt_status_thread, a quarter second apart.
  * ponytail: with two headsets linked, a reopen on the other one plays it at
- * its own level with the mixer at 0 dB until the recheck below has looked (up
- * to about 0.5 s); preinit putting the software volume back at every reopen
+ * its own level with the mixer at 0 dB until the recheck below has looked
+ * (about a second); preinit putting the software volume back at every reopen
  * would close it, at a dip on every rate change. */
 static void dev_volume_pass(void)
 {
@@ -540,9 +541,9 @@ static void dev_volume_pass(void)
         lost = false;
         next = current_tick;
     }
-    if (vol_pending || !bt_output ||
-        (state == DEV_CTL && __atomic_load_n(&vol_wait, __ATOMIC_SEQ_CST) <= 0))
-        return; /* once these clear, vol[] is this output's and holds what misc.c set */
+    if (vol_pending || !bt_output)
+        return; /* once these clear, vol[] is this output's */
+    bool set = __atomic_load_n(&vol_wait, __ATOMIC_SEQ_CST) > 0; /* and holds what misc.c set */
     int pct = vol_pct();
     long now = current_tick;
     int r;
@@ -555,6 +556,7 @@ static void dev_volume_pass(void)
         if (!dev_find(path, sizeof path) || (r = dev_get(path)) < 0)
             return; /* no absolute volume (yet): software volume */
         before = r;
+        seen = pct; /* the number this take is for */
         /* never above where it is; after a switch, silent */
         last = dev_zero ? 0 : MIN(pct_to_dev(pct), r);
         if (!dev_set(path, last))
@@ -566,23 +568,26 @@ static void dev_volume_pass(void)
         if (TIME_BEFORE(now, next))
             return;
         r = dev_get(path);
-        if (r < 0 || r > before || abs(r - last) > DEV_STEP) {
-            state = DEV_TAKE; /* contradicted: again, from what it says now */
+        if (r < 0 || r > before || abs(r - last) > DEV_STEP || vol_pct() != seen) {
+            state = DEV_TAKE; /* contradicted, or the wheel moved: again, from what it says now */
             return;
         }
         last = r;
         seen = dev_to_pct(r);
         tries = fails = 0;
-        ours = dev_zero = false;
+        ours = false;
         took_at = now;
         next = now + HZ;
         state = DEV_CTL;
         dev_take(true);
+        if (!__atomic_load_n(&dev_ctl, __ATOMIC_SEQ_CST))
+            return; /* switched, or chosen again, meanwhile: the retake starts over */
+        dev_zero = false;
         dev_post(seen); /* the mixer leaves the volume to it */
         return;
     }
     /* DEV_CTL: Rockbox's number moved (the wheel, a limit, a screen) */
-    if (pct != seen) {
+    if (set && pct != seen) {
         seen = pct;
         if (pct != dev_to_pct(last)) {
             if (!dev_set(path, pct_to_dev(pct)))
@@ -650,8 +655,9 @@ void shanlingq2_set_device_volume(bool on)
         /* not a number a pass posted before the switch */
         __atomic_store_n(&ev_volume, 1, __ATOMIC_SEQ_CST);
         __atomic_store_n(&vol_wait, 1, __ATOMIC_SEQ_CST);
-        /* ponytail: a switch made on the DAC, then a reboot before Bluetooth,
-         * loses this: the take then reads the saved dB as a position */
+        /* ponytail: switched on, then a reboot before a headset with absolute
+         * volume is taken, loses this: the take then reads the saved dB as a
+         * position */
         dev_zero = running;
         dev_retake = true;
         __atomic_store_n(&dev_link, true, __ATOMIC_SEQ_CST);

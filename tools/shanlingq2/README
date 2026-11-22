@@ -83,7 +83,10 @@ Rockbox reports playing, paused or stopped to the headset, so that headsets
 which send next and previous only to a playing source (AirPods) do so.
 Rockbox's volume is its software volume in either case, each output keeping
 its own level (one with none saved yet starts at -60 dB), unless Control
-Device Volume is on.
+Device Volume is on. A plugin that does not pass system events on (Doom) stays
+silent after the output changes until it is left. bluealsa is Q2 Pod's patched
+one, which offers AAC at 48 kHz only (AirPods; see q2-pod's docs/internals.md,
+Bluetooth AAC).
 
 Sound Settings > Control Device Volume (off by default, named as Q2 Pod's
 switch): on, while a headset with absolute volume is the output, Rockbox's
@@ -102,24 +105,30 @@ nearest level (a car's steps, up to 4 positions off) is taken at that level.
 Switching the setting on while Rockbox runs writes 0 and Rockbox's number
 follows to 0, since its Bluetooth level was a dB, not a position: turn up from
 there. Rockbox's software volume stays on until the headset has read back
-(about 1.5 s), and comes back whenever it doesn't, or the headset or BlueZ goes
-away (a read that fails twice in a row, or a write that fails), or the PCM
-reopens on another headset. In the first 10 s after a take, a raise the
+(about 1.5 s; a wheel move meanwhile starts the take again, at the new level),
+and comes back whenever it doesn't, or the headset or BlueZ goes away (a read
+that fails twice in a row, or a write that fails), or the PCM reopens on
+another headset. In the first 10 s after a take, a raise the
 headset reports is written over, twice at most; a third ends control for that
 connection: Q2 Pod's hand-over leaves it at its maximum, and that report can
-arrive late. Switching the setting off puts the software volume back at once
-and leaves the headset where it is.
+arrive late. A choice in the setting applies at OK, and only if it changed.
+Switching the setting off puts the software volume back at once and leaves the
+headset where it is.
 Limits: a device with no absolute volume, two connected at once, or one that
 keeps contradicting the Q2's writes stays on the software volume (after ten
 tries, or the guard's third raise, until it is chosen again or the setting is
 switched; one dropped on a failed read or write is taken again when the PCM
-reopens on Bluetooth, as earbuds back from their case do). The headset's keys
-reach Rockbox's number within a second or two while playing, and at play when
-paused. A switch made on the DAC, then a reboot before Bluetooth connects,
-reads the saved dB as a position at the first take (-30 dB becomes 70 %, or
-the headset's own level if that is lower). With two headsets linked, a reopen
-on the other one plays it at its own level for up to about half a second
-before the software volume comes back. Volume Limit holds on the headset's
+reopens on Bluetooth, as earbuds back from their case do). After Bluetooth
+stops answering and the volume goes back to Rockbox's own, the next hand-back
+(a track at another sample rate, or a headset back) returns the headset's level
+from before, which can be louder than the number set in between, never above
+that earlier level. The headset's keys reach Rockbox's number within a second
+or two while playing, and at play when paused. Switched on, then a reboot
+before a headset with absolute volume is taken: the first take reads the
+saved dB as a position (-30 dB becomes 70 %, or the headset's own level if
+that is lower). With two headsets linked, a
+reopen on the other one plays it at its own level for about a second before
+the software volume comes back. Maximum Volume Limit holds on the headset's
 keys too, after a moment. A number a plugin swallows (one that doesn't pass
 system events on) is never written to the headset; it is sent again once a
 second and lands when the plugin is left. Rockbox leaves the headset at its
@@ -127,10 +136,6 @@ last level when it exits; Q2 Pod with its own switch on sets it again. How
 loud each position plays is the headset's: one that answers with the level
 asked and plays louder is believed. In control it costs one dbus-send a
 second while playing.
-A plugin that does
-not pass system events on (Doom) stays silent after the output changes until
-it is left. bluealsa is Q2 Pod's patched one, which offers AAC at 48 kHz only
-(AirPods; see q2-pod's docs/internals.md, Bluetooth AAC).
 
 Platform (reverse engineered from stock V1.32 demo)
 ---------------------------------------------------

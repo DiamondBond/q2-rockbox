@@ -17,6 +17,10 @@ misc = (root / "apps/misc.c").read_text()
 start = misc.index("        case SYS_OUTPUT_CHANGED:")
 cases = misc[start:misc.index("\n#endif", start)]
 assert "case SYS_VOLUME_CHANGED:" in cases
+# the option screen calls it at OK, on a change, not at every move (no host
+# test runs option_select.c)
+assert "OFFON_SETTING(F_CB_ON_SELECT_ONLY|F_CB_ONLY_IF_CHANGED, device_volume," in (
+    root / "apps/settings_list.c").read_text()
 
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
@@ -39,7 +43,8 @@ bool button_queue_empty(void);
 #define SYS_EVENT_CLS_MISC 5
 #define MAKE_SYS_EVENT(cls, id) ((long)(1u << 31) | (long)(cls) << 28 | (id))
 #define SYS_VOLUME_CHANGED MAKE_SYS_EVENT(SYS_EVENT_CLS_MISC, 5)
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
+int max_hook(int, int);
+#define MAX(a, b) max_hook((a), (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 extern volatile long current_tick;
 int tick_add_task(void (*)(void));
@@ -64,6 +69,18 @@ int audio_status(void);
 #include <sys/wait.h>
 
 static void *dac_thread(void *); /* the one thread the tests run for real */
+/* MAX, with something else run in the middle of it, once */
+static void (*on_max)(void);
+int max_hook(int a, int b)
+{
+    int m = a > b ? a : b;
+    if (on_max) {
+        void (*f)(void) = on_max;
+        on_max = NULL;
+        f();
+    }
+    return m;
+}
 /* The status thread: accepted, never run (step() makes its passes); the DAC
  * thread for real */
 static int mock_pthread_create(pthread_t *t, const pthread_attr_t *attr,
@@ -117,14 +134,17 @@ void pcm_alsa_set_playback_device(const char *name) { (void)name; }
 
 /* The headset as BlueZ 5.66 has it: what it plays at, BlueZ's Volume (-1: none
  * yet), whether it takes writes, its own step (a write answered with the next
- * level up), how many transports, Gets left to fail, and every write */
+ * level up), how many transports and the first one's number, Gets left to
+ * fail, and every write */
 static struct {
-    int actual, bluez, ignores, step, transports, gone, fail;
+    int actual, bluez, ignores, step, transports, pathno, gone, fail;
     int writes[64], nwrites;
 } hs;
 
-/* dbus-send and sh: the reply on stdout, the exit status for waitpid */
+/* dbus-send and sh: the reply on stdout, the exit status for waitpid; and
+ * something else run while a Get waits for its reply, once */
 static int out_fd = -1, exit_code, spawns;
+static void (*on_get)(void);
 static int mock_adddup2(posix_spawn_file_actions_t *fa, int fd, int to)
 {
     (void)fa;
@@ -148,7 +168,7 @@ static int mock_spawn(pid_t *pid, const char *path, const posix_spawn_file_actio
     if (!strcmp(argv[0], "/bin/sh")) { /* the transports' paths, through sed */
         assert(strstr(argv[2], "GetManagedObjects"));
         for (int i = 0; !hs.gone && i < hs.transports; i++) {
-            snprintf(line, sizeof line, "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF/sep1/fd%d\n", i);
+            snprintf(line, sizeof line, "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF/sep1/fd%d\n", i + hs.pathno);
             reply(line);
         }
         return 0;
@@ -163,6 +183,11 @@ static int mock_spawn(pid_t *pid, const char *path, const posix_spawn_file_actio
         return 0;
     }
     if (!strcmp(argv[6], "org.freedesktop.DBus.Properties.Get")) {
+        if (on_get) {
+            void (*f)(void) = on_get;
+            on_get = NULL;
+            f();
+        }
         if (hs.fail) { /* bluetoothd slow: the reply timed out */
             hs.fail--;
             exit_code = 1;
@@ -201,7 +226,7 @@ static struct { int level, bt, ctl, actual, vol; } mix[512];
 static int mixes;
 void pcm_set_mixer_volume(int left, int right)
 {
-    assert(left == right && mixes < 512);
+    assert(left <= 0 && right <= 0 && left == right && mixes < 512); /* never louder than the track */
     mix[mixes].level = left;
     mix[mixes].bt = bt_output;
     mix[mixes].ctl = dev_ctl;
@@ -342,6 +367,20 @@ static void insist(void)
     assert(!dev_ctl && hs.nwrites == 3 && last_mix() == -600);
 }
 
+/* Off then On while a Get waits; the wheel to -80 dB meanwhile; main's set
+ * between mixer_level's MAX and its write */
+static void onoff_hook(void)
+{
+    shanlingq2_set_device_volume(0);
+    shanlingq2_set_device_volume(1);
+}
+static void down_hook(void) { sound_set_volume(-80); }
+static void raise_hook(void)
+{
+    vol[0] = vol[1] = -100;
+    mixer_level();
+}
+
 int main(int argc, char **argv)
 {
     assert(argc == 2);
@@ -450,9 +489,15 @@ int main(int argc, char **argv)
         boot_bt(1);
         steps(10);
         assert(dev_ctl);
+        dev_post(40); /* pending at the change: dropped with it */
+        swallow = 1;
         choose(1, 1);
         main_first();
-        assert(!bt_output && !dev_ctl && last_mix() == saved[0] * 10);
+        swallow = 0;
+        assert(!bt_output && !dev_ctl && last_mix() == saved[0] * 10 && vol_wait == 1);
+        dev_post(40); /* one for the headset, set on the DAC: acknowledged */
+        main_first();
+        assert(vol_wait == 1);
         steps(10);
         hs.actual = hs.bluez = 100; /* changed meanwhile, by its own keys */
         choose(0, 1);
@@ -475,6 +520,20 @@ int main(int argc, char **argv)
         assert(!dev_ctl && last_mix() == -1000); /* at once */
         steps(40);
         assert(hs.nwrites == w && hs.actual == 0);
+    } else if (!strcmp(run, "switch-again")) {
+        /* after the silent start, a later take is at Rockbox's level */
+        hs.actual = hs.bluez = 127;
+        boot_bt(0);
+        steps(4);
+        shanlingq2_set_device_volume(1);
+        steps(10);
+        sound_set_volume(-60);
+        steps(8);
+        choose(1, 1);
+        step();
+        choose(0, 1);
+        steps(10);
+        assert(dev_ctl && hs.actual == 51);
     } else if (!strcmp(run, "gone")) {
         /* bluetoothd's transport gone in control */
         hs.actual = hs.bluez = 127;
@@ -551,6 +610,7 @@ int main(int argc, char **argv)
         /* a second headset linked, the PCM reopened on it: software volume */
         handover();
         hs.transports = 2;
+        swallow = 100; /* the software volume back without misc.c */
         audiohw_preinit();
         steps(2);
         assert(!dev_ctl && last_mix() == -600);
@@ -620,6 +680,89 @@ int main(int argc, char **argv)
         dev_take(true);
         assert(!dev_ctl);
         return 0;
+    } else if (!strcmp(run, "gated-guard")) {
+        /* the take's number not set for 12 s, the hand-over's late 127 meanwhile:
+         * still written over */
+        hs.actual = hs.bluez = 127;
+        swallow = 1000;
+        boot_bt(1);
+        steps(8);
+        assert(dev_ctl);
+        hs.actual = hs.bluez = 127;
+        steps(48);
+        swallow = 0;
+        steps(12);
+        assert(global_status.volume == -60 && hs.actual == 51);
+    } else if (!strcmp(run, "toggle-race2")) {
+        /* Off then On while the take's read-back waits: still a silent start */
+        hs.actual = hs.bluez = 127;
+        boot_bt(1);
+        on_get = onoff_hook;
+        steps(20);
+        assert(dev_ctl && hs.actual == 0 && global_status.volume == -100);
+    } else if (!strcmp(run, "settle-down")) {
+        /* the wheel down while the take settles: taken again, at the new level */
+        hs.actual = hs.bluez = 127;
+        boot_bt(1);
+        sound_set_volume(-80);
+        steps(20);
+        assert(dev_ctl && global_status.volume == -80 && hs.actual == pct_to_dev(20));
+    } else if (!strcmp(run, "settle-get")) {
+        /* the same, while the read-back's Get waits */
+        hs.actual = hs.bluez = 127;
+        boot_bt(1);
+        on_get = down_hook;
+        steps(20);
+        assert(dev_ctl && global_status.volume == -80 && hs.actual == pct_to_dev(20));
+    } else if (!strcmp(run, "mix-race")) {
+        /* unmuted on the writer thread while main sets a higher volume */
+        handover();
+        steps(4);
+        muted = 1;
+        on_max = raise_hook;
+        audiohw_mute(0);
+    } else if (!strcmp(run, "stale-ack")) {
+        /* an older number set while a newer one is pending acknowledges nothing */
+        saved[1] = 0;
+        hs.actual = hs.bluez = 40;
+        boot_bt(1);
+        steps(10);
+        int w = hs.nwrites;
+        dev_post(dev_to_pct(40));
+        data_now = 0;
+        handle(SYS_VOLUME_CHANGED);
+        current_tick += HZ;
+        dev_volume_pass();
+        assert(hs.nwrites == w);
+    } else if (!strcmp(run, "paused-guard")) {
+        /* paused just after the take: the hand-over's late 127 is still read */
+        hs.actual = hs.bluez = 127;
+        boot_bt(1);
+        steps(8);
+        playing = AUDIO_STATUS_PLAY | AUDIO_STATUS_PAUSE;
+        hs.actual = hs.bluez = 127;
+        steps(60);
+        playing = AUDIO_STATUS_PLAY;
+        steps(8);
+        assert(!(dev_ctl && hs.actual == 127));
+    } else if (!strcmp(run, "late-high")) {
+        /* 97 %, the headset at 124, its 127 late: never taken above it */
+        saved[1] = -3;
+        hs.actual = hs.bluez = 124;
+        boot_bt(1);
+        hs.bluez = 127;
+        steps(20);
+        assert(global_status.volume == -3);
+    } else if (!strcmp(run, "other-path")) {
+        /* one transport, at a new path after a reopen: taken again */
+        handover();
+        steps(50);
+        int w = hs.nwrites;
+        hs.pathno = 1;
+        hs.actual = hs.bluez = 127;
+        audiohw_preinit();
+        steps(2);
+        assert(!dev_ctl || hs.nwrites > w);
     } else
         return 2;
     check();
@@ -632,6 +775,8 @@ int main(int argc, char **argv)
     for run in ("mapping", "off", "handover", "late", "car", "knob", "limit",
                 "ignores", "none", "two", "wired", "switch", "gone", "race",
                 "insist", "held", "toggle", "step-take", "step-click", "step-limit",
-                "takeover", "rate", "lost-take", "lost-knob", "slow", "paused"):
+                "takeover", "rate", "lost-take", "lost-knob", "slow", "paused",
+                "gated-guard", "toggle-race2", "settle-down", "settle-get", "mix-race",
+                "stale-ack", "paused-guard", "late-high", "other-path", "switch-again"):
         subprocess.run([str(tmp / "test"), run], check=True, timeout=30)
 print("Q2 Control Device Volume checks passed")

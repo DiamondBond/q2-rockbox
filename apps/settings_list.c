@@ -1155,7 +1155,8 @@ const struct settings_list settings[] = {
                   volume_limit_load_from_cfg, volume_limit_write_to_cfg,
                   volume_limit_is_changed, volume_limit_set_default),
 #ifdef SHANLING_Q2
-    OFFON_SETTING(0, device_volume, LANG_CONTROL_DEVICE_VOLUME, false,
+    OFFON_SETTING(F_CB_ON_SELECT_ONLY|F_CB_ONLY_IF_CHANGED, device_volume,
+                  LANG_CONTROL_DEVICE_VOLUME, false,
                   "control device volume", device_volume_apply),
 #endif
     SOUND_SETTING(0, balance, LANG_BALANCE, "balance", SOUND_BALANCE),
