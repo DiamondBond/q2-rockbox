@@ -823,7 +823,10 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
         {
             int volume = button_get_data();
             if (!global_status.volume_on_bt || !shanlingq2_bt_output())
+            {
+                shanlingq2_volume_set(volume);
                 return 0;
+            }
             if (volume != global_status.volume)
             {
                 global_status.volume = volume;
@@ -831,6 +834,7 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
             }
             else /* quietly: no volume popup, no status write */
                 sound_set_volume(volume);
+            shanlingq2_volume_set(volume); /* set: the codec may write the headset again */
             return 0;
         }
 #endif

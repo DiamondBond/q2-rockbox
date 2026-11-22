@@ -36,6 +36,8 @@ void shanlingq2_volume_ack(bool bt);
  * its position) */
 void shanlingq2_set_device_volume(bool on);
 bool shanlingq2_device_volume(void);
+/* misc.c has set (or dropped) the SYS_VOLUME_CHANGED number volume */
+void shanlingq2_volume_set(int volume);
 /* button-q2: the latest event for the main thread (SYS_OUTPUT_CHANGED, ...), if any */
 bool shanlingq2_take_event(long *id, intptr_t *data);
 
