@@ -123,11 +123,13 @@ static volatile long idle_since; /* tick of the last stop; 0: not idle */
  * tick thread (the clock), the writer (audio) or main (the UI). (A second 23 s
  * wait seen then was in ALSA's hw_params, which this doesn't cover.) A caller
  * writes {request, value} to a pipe instead, one write under PIPE_BUF, never
- * torn, and the thread makes the ioctls in that order, so the driver sees the
- * sequences it saw before, unless a wait below times out. Where the driver has
- * to have caught up (the power-on before the PCM opens or fills, the stop's
- * mute before a rate change, the power-off before the node is closed), the
- * caller waits for a marker, for a bounded time: shanlingq2_dac_sync. */
+ * torn, and the thread makes the ioctls in that order. One with no wait behind
+ * it (a stop's or a start's mute, a gain or filter change) can be in the driver
+ * while ALSA calls are; one a wait below times out on can land after an ALSA
+ * call it used to precede. Where the driver has to have caught up (the
+ * power-on before the PCM opens or fills, the stop's mute before a rate
+ * change, the power-off before the node is closed), the caller waits for a
+ * marker, for a bounded time: shanlingq2_dac_sync. */
 struct dac_req {
     unsigned long req;
     int value;
@@ -143,8 +145,6 @@ static unsigned sync_sent, sync_done; /* marker numbers: the last queued, the la
 static void dac_set(unsigned long req, int v)
 {
     struct dac_req r = { req, v };
-    if (dac < 0) /* the node opens after the thread starts */
-        return;
     ssize_t n = write(dac_pipe[1], &r, sizeof r);
     (void)n;
 }
@@ -448,9 +448,10 @@ bool shanlingq2_bt_output(void)
     return bt_output;
 }
 
-/* At shutdown (powermgmt). Behind a stalled driver the node and the queue
- * are left as they are, so the power-off is still made if the stall ends:
- * the process is going, and its exit closes the node. */
+/* At shutdown (powermgmt). Behind a stall longer than the wait, the node and
+ * the queue are left as they are: the power-off is made only if the stall ends
+ * before the process exits, and the exit drops what is still queued and closes
+ * the node. */
 void audiohw_close(void)
 {
     pthread_mutex_lock(&dac_mtx);

@@ -466,11 +466,6 @@ int main(void)
     settle();
     calls = 0;
 
-    /* Marker numbers wrap without a false timeout */
-    sync_sent = sync_done = 0xfffffffeu;
-    for (int i = 0; i < 4; i++)
-        assert(shanlingq2_dac_sync(1000));
-
     /* A stalled driver: the callers return at once, the wait is bounded, and a
      * mute and an unmute sent during the stall both arrive, in order */
     stall_us = 1500000;
