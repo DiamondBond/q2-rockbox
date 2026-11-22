@@ -89,6 +89,16 @@ Next, in order:
 5. Optional: 375x320 layouts for the left-out plugins; USB storage from inside Rockbox (the dwc2 gadget has to be set up as stock does; `pc_link` stays 0 until then).
 6. Announce in the Rockbox forums' New Ports board; later, upstream through Gerrit (the simulator build helps review).
 
+## Bluetooth: Control Device Volume
+
+Sound Settings > Control Device Volume, off by default (Q2 Pod's switch has the same name and default). Off is the per-output software volume exactly as before: `shanlingq2_codec.c` reads and writes nothing, and `mixer_level` makes the same mixer call. On, while a headset whose absolute volume BlueZ knows is the output, Rockbox's -100..0 dB are the headset's 0..100 % (its AVRCP 0..127), the mixer carries only the balance, and the headset's keys move Rockbox's number (`SYS_VOLUME_CHANGED`, misc.c). The skin's volume number and bar show the position while the headset carries the volume, and the wheel steps it one a click.
+
+The path is BlueZ 5.66's `org.bluez.MediaTransport1` `Volume`, read and set with `dbus-send` from the Bluetooth status thread, as Q2 Pod's libbtctl does. bluealsa (4.0.0, started without `--a2dp-volume`) treats its ctl's A2DP volume as its own software gain for a source and skips the headset's reports, so it never reaches the headset. BlueZ has a source transport's `Volume` only once the headset has reported one, and updates it only from the headset (its answer to a write, or its own change), so a read-back after a write is the headset's word.
+
+Safety: a take writes the lower of Rockbox's level and the headset's own, then waits 1.5 s and reads back; only a read within one step hands the volume to the headset, and the mixer's software volume stays until then. A higher report in the first 10 s after a take is written over (Q2 Pod's hand-over raises the headset to its maximum, and its report can come after ours); later ones are the headset's keys and are followed, never written back. A transport or volume gone, a failed write, or a headset that keeps contradicting puts the software volume back. An output change clears control before its silence, and the setting off clears it at once. Checks: `tools/shanlingq2/test_device_volume.py`.
+
+Limits: device-specific loudness per position is the headset's; turning the setting on reads the Bluetooth level as a position (-30 dB is 70 %) unless the headset was lower; a headset that ignores a write keeps its own report and stays on software volume, but one that answers with the level asked and plays louder is believed; reports reach Rockbox within 1 to 2 s; one `dbus-send` a second while in control.
+
 ## Verification
 
 

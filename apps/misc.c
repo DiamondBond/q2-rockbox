@@ -815,6 +815,24 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
             shanlingq2_volume_ack(bt); /* its level is set: ends the codec's silence */
             return 0;
         }
+        /* Control Device Volume: the headset's own volume moved (its keys, a
+         * car's knob), or the codec took it or left it: set again either way,
+         * so the mixer follows (shanlingq2_codec.c). Only while the headset
+         * is the output: a late one is for a headset no longer playing. */
+        case SYS_VOLUME_CHANGED:
+        {
+            int volume = button_get_data();
+            if (!global_status.volume_on_bt || !shanlingq2_bt_output())
+                return 0;
+            if (volume != global_status.volume)
+            {
+                global_status.volume = volume;
+                setvol();
+            }
+            else /* quietly: no volume popup, no status write */
+                sound_set_volume(volume);
+            return 0;
+        }
 #endif
 #if (CONFIG_PLATFORM & PLATFORM_HOSTED) && defined(PLATFORM_HAS_VOLUME_CHANGE)
         case SYS_VOLUME_CHANGED:
@@ -1027,6 +1045,11 @@ int get_normalized_volume(void)
 void adjust_volume(int steps)
 {
 #ifdef HAVE_PERCEPTUAL_VOLUME
+#if defined(SHANLING_Q2) && !defined(SIMULATOR)
+    if (shanlingq2_device_volume()) /* a position: one step a click */
+        adjust_volume_ex(steps, VOLUME_ADJUST_DIRECT);
+    else
+#endif
     adjust_volume_ex(steps, global_settings.volume_adjust_mode);
 #else
     adjust_volume_ex(steps, VOLUME_ADJUST_DIRECT);

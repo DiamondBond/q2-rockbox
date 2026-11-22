@@ -17343,3 +17343,20 @@
     *: "Equalizer optimizer"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_CONTROL_DEVICE_VOLUME
+  desc: in the sound settings: Rockbox's volume sets a Bluetooth headset's own volume
+  user: core
+  <source>
+    *: none
+    shanlingq2: "Control Device Volume"
+  </source>
+  <dest>
+    *: none
+    shanlingq2: "Control Device Volume"
+  </dest>
+  <voice>
+    *: none
+    shanlingq2: "Control Device Volume"
+  </voice>
+</phrase>

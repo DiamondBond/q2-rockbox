@@ -41,6 +41,9 @@ bool button_queue_empty(void);
 #define TIME_AFTER(a, b) TIME_BEFORE(b, a)
 #define SYS_EVENT_CLS_MISC 5
 #define MAKE_SYS_EVENT(cls, id) ((long)(1u << 31) | (long)(cls) << 28 | (id))
+#define SYS_VOLUME_CHANGED MAKE_SYS_EVENT(SYS_EVENT_CLS_MISC, 5)
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 extern volatile long current_tick;
 int tick_add_task(void (*)(void));
 """)
@@ -126,6 +129,7 @@ void sound_set_volume(int value)
     audiohw_set_volume(value * 10, value * 10); /* dB to tenths, as sound.c */
 }
 static void setvol(void) { sound_set_volume(global_status.volume); }
+static intptr_t button_get_data(void) { return 0; } /* no SYS_VOLUME_CHANGED here */
 
 static int output_changed(void)
 {

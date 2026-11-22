@@ -938,6 +938,9 @@ void settings_apply(bool read_disk)
     CHART("<set_codepage");
 
     sound_settings_apply();
+#if defined(SHANLING_Q2) && !defined(SIMULATOR)
+    shanlingq2_set_device_volume(global_settings.device_volume);
+#endif
 
 #ifdef HAVE_DISK_STORAGE
     audio_set_buffer_margin(global_settings.buffer_margin);

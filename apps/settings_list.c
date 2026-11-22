@@ -1108,6 +1108,15 @@ static void hp_lo_select_apply(int arg)
 #endif /* __PCTOOL__ */
 
 #ifdef SHANLING_Q2
+static void device_volume_apply(bool on)
+{
+#ifdef SIMULATOR
+    (void)on;
+#else
+    shanlingq2_set_device_volume(on);
+#endif
+}
+
 /* volume is the output in use's after a reset, or a first boot without the key */
 static int volume_on_bt_default(void)
 {
@@ -1145,6 +1154,10 @@ const struct settings_list settings[] = {
                   NULL, "volume limit",
                   volume_limit_load_from_cfg, volume_limit_write_to_cfg,
                   volume_limit_is_changed, volume_limit_set_default),
+#ifdef SHANLING_Q2
+    OFFON_SETTING(0, device_volume, LANG_CONTROL_DEVICE_VOLUME, false,
+                  "control device volume", device_volume_apply),
+#endif
     SOUND_SETTING(0, balance, LANG_BALANCE, "balance", SOUND_BALANCE),
 /* Tone controls */
 #ifdef AUDIOHW_HAVE_BASS
