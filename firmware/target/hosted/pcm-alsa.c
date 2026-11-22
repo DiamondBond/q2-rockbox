@@ -864,6 +864,9 @@ static void sink_set_freq_nolock(uint16_t freq)
 #ifdef AUDIOHW_MUTE_ON_SRATE_CHANGE
         audiohw_mute(true);
 #endif
+#ifdef HAVE_SHANLINGQ2_CODEC
+        shanlingq2_dac_sync(1000); /* the stop's mute lands before the rate changes */
+#endif
         snd_pcm_drop(handle);
 
         set_hwparams(handle, sampr); // FIXME: check return code?

@@ -40,6 +40,7 @@
  * The driver keeps the rate from hw_params, without I2C while off, and applies
  * it at power on, so a rate change before the wake is fine. */
 #include <alsa/asoundlib.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
@@ -47,12 +48,14 @@
 #include <stdint.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #include "config.h"
 #include "audio.h"
 #include "audiohw.h"
 #include "button.h"
 #include "kernel.h"
+#include "panic.h"
 #include "pcm-alsa.h"
 
 #define DAC_VOLUME   0xc0044d00 /* left << 8 | right, each 0..100 (0 dB) */
@@ -108,16 +111,118 @@ bool shanlingq2_take_event(long *id, intptr_t *data)
     *data = o;
     return true;
 }
-/* DAC ioctls and dac_on, across the tick, main and writer threads. Never from
- * SIGIO, which is why audiohw_mute doesn't take it. */
+/* dac_on, across the tick, main and writer threads. Never from SIGIO, which
+ * is why audiohw_mute doesn't take it. Never held across an ioctl: those are
+ * made by the thread below. */
 static pthread_mutex_t dac_mtx = PTHREAD_MUTEX_INITIALIZER;
 static volatile bool dac_on;
 static volatile long idle_since; /* tick of the last stop; 0: not idle */
 
+/* The DAC's ioctls, from one thread of their own. A DAC_MUTE ioctl was seen
+ * to stall 23 s in the driver's I2C, and whoever made it stalled with it: the
+ * tick thread (the clock), the writer (audio) or main (the UI). (A second 23 s
+ * wait seen then was in ALSA's hw_params, which this doesn't cover.) A caller
+ * writes {request, value} to a pipe instead, one write under PIPE_BUF, never
+ * torn, and the thread makes the ioctls in that order, so the driver sees the
+ * sequences it saw before, unless a wait below times out. Where the driver has
+ * to have caught up (the power-on before the PCM opens or fills, the stop's
+ * mute before a rate change, the power-off before the node is closed), the
+ * caller waits for a marker, for a bounded time: shanlingq2_dac_sync. */
+struct dac_req {
+    unsigned long req;
+    int value;
+};
+#define DAC_SYNC 0 /* a marker: value is its number; no ioctl */
+static int dac_pipe[2] = { -1, -1 };
+static pthread_mutex_t sync_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t sync_cond;
+static unsigned sync_sent, sync_done; /* marker numbers: the last queued, the last reached */
+
+/* Also from SIGIO (audiohw_mute): a write that never blocks. A full pipe (64 KB
+ * of requests behind a stalled driver) drops the request. */
 static void dac_set(unsigned long req, int v)
 {
-    if (dac >= 0)
-        ioctl(dac, req, &v);
+    struct dac_req r = { req, v };
+    if (dac < 0) /* the node opens after the thread starts */
+        return;
+    ssize_t n = write(dac_pipe[1], &r, sizeof r);
+    (void)n;
+}
+
+static void *dac_thread(void *arg)
+{
+    (void)arg;
+    struct dac_req r;
+    /* whole records only (each write is one); signals are blocked here */
+    while (read(dac_pipe[0], &r, sizeof r) == (ssize_t)sizeof r) {
+        if (r.req == DAC_SYNC) {
+            pthread_mutex_lock(&sync_mtx);
+            sync_done = (unsigned)r.value;
+            pthread_cond_broadcast(&sync_cond);
+            pthread_mutex_unlock(&sync_mtx);
+            continue;
+        }
+        int fd = dac; /* -1: closed or never opened; dropped */
+        if (fd >= 0)
+            ioctl(fd, r.req, &r.value);
+    }
+    return NULL;
+}
+
+/* Waits until the thread has made every ioctl queued so far, at most ms;
+ * true if it did. Not from SIGIO. */
+bool shanlingq2_dac_sync(int ms)
+{
+    /* numbered and written under the lock: markers reach the pipe in number
+     * order, so sync_done only grows (the write never blocks) */
+    pthread_mutex_lock(&sync_mtx);
+    unsigned mine = ++sync_sent;
+    struct dac_req r = { DAC_SYNC, (int)mine };
+    bool queued = write(dac_pipe[1], &r, sizeof r) == (ssize_t)sizeof r;
+    pthread_mutex_unlock(&sync_mtx);
+    if (!queued)
+        return false;
+    struct timespec until;
+    clock_gettime(CLOCK_MONOTONIC, &until);
+    until.tv_sec += ms / 1000;
+    until.tv_nsec += (ms % 1000) * 1000000L;
+    if (until.tv_nsec >= 1000000000L) {
+        until.tv_nsec -= 1000000000L;
+        until.tv_sec++;
+    }
+    pthread_mutex_lock(&sync_mtx);
+    while ((int)(sync_done - mine) < 0 &&
+           pthread_cond_timedwait(&sync_cond, &sync_mtx, &until) == 0)
+        ;
+    bool reached = (int)(sync_done - mine) >= 0;
+    pthread_mutex_unlock(&sync_mtx);
+    return reached;
+}
+
+/* Once, at the first preinit (sink_dma_init, on main), whichever output
+ * comes first: signals blocked as for Rockbox's other threads of their own.
+ * Without the thread nothing would reach the DAC, so a failure is a panic, as
+ * for the PCM writer. */
+static void dac_thread_start(void)
+{
+    if (dac_pipe[0] >= 0)
+        return;
+    pthread_condattr_t ca;
+    pthread_condattr_init(&ca);
+    pthread_condattr_setclock(&ca, CLOCK_MONOTONIC);
+    pthread_cond_init(&sync_cond, &ca);
+    pthread_condattr_destroy(&ca);
+    /* the reader blocks; the writers (SIGIO among them) never do */
+    if (pipe2(dac_pipe, O_CLOEXEC) < 0 || fcntl(dac_pipe[1], F_SETFL, O_NONBLOCK) < 0)
+        panicf("Unable to open the DAC thread's pipe: %s", strerror(errno));
+    sigset_t all, old;
+    pthread_t t;
+    sigfillset(&all);
+    pthread_sigmask(SIG_BLOCK, &all, &old);
+    int err = pthread_create(&t, NULL, dac_thread, NULL);
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+    if (err)
+        panicf("Unable to start the DAC thread: %s", strerror(err));
 }
 
 /* A headset bluez-alsa has a PCM for; no daemon (a cold boot) fails at once */
@@ -221,9 +326,10 @@ static void bt_status_start(void)
     pthread_sigmask(SIG_SETMASK, &old, NULL);
 }
 
-/* All a DAC powered off has lost, with dac_mtx held. The driver sleeps about
- * 530 ms in here (100 in HEADSET, 428 in POWER), and its last sleep plus the 10
- * jiffies it waits to unmute are settling enough, as for stock. */
+/* All a DAC powered off has lost, queued with dac_mtx held. The driver
+ * sleeps about 530 ms making these (100 in HEADSET, 428 in POWER), which the
+ * caller's sync waits for; its last sleep plus the 10 jiffies it waits to
+ * unmute are settling enough, as for stock. */
 static void dac_power_on(void)
 {
     dac_set(DAC_HEADSET, 1);
@@ -241,6 +347,7 @@ static void dac_power_on(void)
  * lost, to choose the device again */
 void audiohw_preinit(void)
 {
+    dac_thread_start();
     bool bt = !headphones_inserted() && bt_connected();
     static int was_bt = -1; /* the kind chosen last time; the first counts as a change */
     bool changed = (int)bt != was_bt;
@@ -282,6 +389,7 @@ void audiohw_preinit(void)
     dac_power_on();
     audiohw_mute(false);
     pthread_mutex_unlock(&dac_mtx);
+    shanlingq2_dac_sync(2000); /* powered before the PCM opens; the driver's 530 ms */
 }
 
 static bool dac_idle_expired(void)
@@ -290,11 +398,9 @@ static bool dac_idle_expired(void)
     return dac_on && since && !TIME_BEFORE(current_tick, since + DAC_IDLE_TICKS);
 }
 
-/* Takes the driver 300 ms when it expires, on the tick thread. The stored mute
- * and volume stay as they are: the driver's mute holds through the wake, which
- * then restores ours.
- * ponytail: ticks pause for those 300 ms, then catch up (kernel-unix.c). Only
- * after 30 s of silence; give it its own thread if the hitch ever shows. */
+/* Queued from the tick thread when it expires; the driver takes 300 ms over
+ * it on the DAC thread. The stored mute and volume stay as they are: the
+ * driver's mute holds through the wake, which then restores ours. */
 static void dac_idle_tick(void)
 {
     if (!dac_idle_expired())
@@ -320,9 +426,14 @@ void shanlingq2_dac_wake(void)
 {
     idle_since = 0;
     pthread_mutex_lock(&dac_mtx);
-    if (!dac_on && !bt_output)
+    bool powering = !dac_on && !bt_output;
+    if (powering)
         dac_power_on();
     pthread_mutex_unlock(&dac_mtx);
+    /* powered before the first fill (behind an idle power-off, about 830 ms);
+     * a DAC already on, or Bluetooth, doesn't wait */
+    if (powering)
+        shanlingq2_dac_sync(2000);
 }
 
 /* Not in preinit: writer_reopen calls that during playback */
@@ -337,16 +448,22 @@ bool shanlingq2_bt_output(void)
     return bt_output;
 }
 
+/* At shutdown (powermgmt). Behind a stalled driver the node and the queue
+ * are left as they are, so the power-off is still made if the stall ends:
+ * the process is going, and its exit closes the node. */
 void audiohw_close(void)
 {
     pthread_mutex_lock(&dac_mtx);
     audiohw_mute(true);
     dac_set(DAC_POWER, 0);
     dac_on = false;
-    if (dac >= 0)
-        close(dac);
-    dac = -1;
     pthread_mutex_unlock(&dac_mtx);
+    if (!shanlingq2_dac_sync(1000)) /* the power-off made before the node goes */
+        return;
+    int fd = dac;
+    dac = -1;
+    if (fd >= 0)
+        close(fd);
 }
 
 void audiohw_set_frequency(int fsel)
