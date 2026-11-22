@@ -42,6 +42,7 @@ bool button_queue_empty(void);
 extern volatile long current_tick;
 int tick_add_task(void (*)(void));
 """)
+    (tmp / "panic.h").write_text("void panicf(const char *, ...) __attribute__((noreturn));\n")
     (tmp / "pcm-alsa.h").write_text("""
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
@@ -60,10 +61,15 @@ int audio_status(void);
 #include <string.h>
 #include <sys/wait.h>
 
+static void *dac_thread(void *); /* the one thread the tests run for real */
+/* The status thread: accepted, never run (step() makes its passes); the DAC
+ * thread for real */
 static int mock_pthread_create(pthread_t *t, const pthread_attr_t *attr,
                                void *(*f)(void *), void *arg)
 {
-    (void)t; (void)attr; (void)f; (void)arg;
+    if (f == dac_thread)
+        return pthread_create(t, attr, f, arg);
+    (void)t; (void)attr; (void)arg;
     return 0;
 }
 static int mock_spawn(pid_t *, const char *, const posix_spawn_file_actions_t *,
@@ -83,6 +89,11 @@ static pid_t mock_waitpid(pid_t pid, int *status, int options);
 #undef posix_spawn
 #undef posix_spawn_file_actions_adddup2
 #undef waitpid
+__attribute__((noreturn)) void panicf(const char *fmt, ...)
+{
+    (void)fmt;
+    abort();
+}
 
 volatile long current_tick = 1;
 int audio_status(void) { return 0; }
@@ -463,7 +474,7 @@ int main(int argc, char **argv)
     return 0;
 }
 ''')
-    subprocess.run(["cc", "-Wall", "-Wextra", "-Werror", "-fsanitize=undefined",
+    subprocess.run(["cc", "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror", "-fsanitize=undefined",
                     "-pthread", f"-I{tmp}", f"-I{root}", str(tmp / "test.c"),
                     "-o", str(tmp / "test")], check=True)
     for run in ("mapping", "off", "handover", "late", "car", "knob", "limit",
