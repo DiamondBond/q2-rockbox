@@ -36,6 +36,7 @@ int tick_add_task(void (*)(void));
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
 """)
+    (tmp / "sound.h").write_text("#define SOUND_VOLUME 0\nint sound_current(int);\n")
     (tmp / "audio.h").write_text("""
 #define AUDIO_STATUS_PLAY  1
 #define AUDIO_STATUS_PAUSE 2
@@ -101,6 +102,7 @@ bool headphones_inserted(void) { return phones; }
 void pcm_alsa_set_playback_device(const char *name) { (void)name; }
 void pcm_set_mixer_volume(int left, int right) { (void)left; (void)right; }
 int audio_status(void) { return 0; }
+int sound_current(int setting) { (void)setting; return 0; } /* Control Device Volume is off here */
 
 int main(void)
 {

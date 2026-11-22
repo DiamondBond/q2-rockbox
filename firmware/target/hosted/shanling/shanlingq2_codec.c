@@ -59,6 +59,7 @@
 #include "kernel.h"
 #include "panic.h"
 #include "pcm-alsa.h"
+#include "sound.h"
 
 #define DAC_VOLUME   0xc0044d00 /* left << 8 | right, each 0..100 (0 dB) */
 #define DAC_POWER    0xc0044d1a /* 1 on, 0 off */
@@ -387,11 +388,16 @@ static int dev_to_pct(int d)
     return (d * 100 + 63) / 127;
 }
 
-/* Rockbox's volume for this output, as % (vol[] is in tenths of a dB) */
+/* Rockbox's volume for this output, as %: its number, not vol[], which
+ * carries Bass and Treble's boost (sound.c's prescale).
+ * ponytail: the number is stored before it is clamped (a few instructions in
+ * adjust_volume_ex; a .cfg load until settings_apply), and a look in between
+ * writes it past Maximum Volume Limit until the next look; a clamp to
+ * global_settings.volume_limit here if that ever matters */
 static int vol_pct(void)
 {
-    int m = MAX(vol[0], vol[1]);
-    return m < -1000 ? 0 : m > 0 ? 100 : (m + 1000) / 10;
+    int v = sound_current(SOUND_VOLUME);
+    return v < -100 ? 0 : v > 0 ? 100 : v + 100;
 }
 
 /* argv's program, its output in out (NUL-terminated); true if it exits 0 */
@@ -568,7 +574,11 @@ static void dev_volume_pass(void)
         if (TIME_BEFORE(now, next))
             return;
         r = dev_get(path);
-        if (r < 0 || r > before || abs(r - last) > DEV_STEP || vol_pct() != seen) {
+        /* a wheel move takes again, at no cost in tries; a switch-on's 0 is 0
+         * whatever the wheel says */
+        bool moved = !dev_zero && vol_pct() != seen;
+        if (r < 0 || r > before || abs(r - last) > DEV_STEP || moved) {
+            tries -= moved;
             state = DEV_TAKE; /* contradicted, or the wheel moved: again, from what it says now */
             return;
         }
@@ -581,7 +591,7 @@ static void dev_volume_pass(void)
         state = DEV_CTL;
         dev_take(true);
         if (!__atomic_load_n(&dev_ctl, __ATOMIC_SEQ_CST))
-            return; /* switched, or chosen again, meanwhile: the retake starts over */
+            return; /* switched, or chosen again, meanwhile: a retake, or Off, follows */
         dev_zero = false;
         dev_post(seen); /* the mixer leaves the volume to it */
         return;
@@ -628,6 +638,8 @@ static void dev_volume_pass(void)
         next = now + DEV_SETTLE;
         return;
     }
+    if (vol_pct() != pct)
+        return; /* the wheel moved during the read: it is the later word */
     last = r; /* its keys or a car's knob: Rockbox follows, no write back */
     seen = dev_to_pct(r);
     dev_post(seen);
@@ -640,7 +652,7 @@ hold:
     dev_take(false);
     if (!muted && !vol_pending)
         mixer_level();
-    dev_post(pct);
+    dev_post(vol_pct()); /* not pct: the wheel may have moved during the call */
 }
 
 /* Sound Settings' Control Device Volume, and its value at boot */

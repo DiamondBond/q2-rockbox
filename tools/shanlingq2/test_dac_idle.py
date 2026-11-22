@@ -52,6 +52,7 @@ int tick_add_task(void (*)(void));
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
 """)
+    (tmp / "sound.h").write_text("#define SOUND_VOLUME 0\nint sound_current(int);\n")
     (tmp / "audio.h").write_text("""
 #define AUDIO_STATUS_PLAY  1
 #define AUDIO_STATUS_PAUSE 2
@@ -120,6 +121,7 @@ static void settle(void) { assert(shanlingq2_dac_sync(2000)); }
 
 static int playing;
 int audio_status(void) { return playing; }
+int sound_current(int setting) { (void)setting; return 0; } /* Control Device Volume is off here */
 
 volatile long current_tick;
 static void (*task)(void);

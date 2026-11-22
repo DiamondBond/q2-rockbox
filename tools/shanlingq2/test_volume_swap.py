@@ -52,6 +52,7 @@ int tick_add_task(void (*)(void));
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
 """)
+    (tmp / "sound.h").write_text("#define SOUND_VOLUME 0\nint sound_current(int);\n")
     (tmp / "audio.h").write_text("""
 #define AUDIO_STATUS_PLAY  1
 #define AUDIO_STATUS_PAUSE 2
@@ -89,6 +90,7 @@ __attribute__((noreturn)) void panicf(const char *fmt, ...)
 
 volatile long current_tick = 1;
 int audio_status(void) { return 0; }
+int sound_current(int setting) { (void)setting; return 0; } /* Control Device Volume is off here */
 int tick_add_task(void (*f)(void)) { (void)f; return 0; }
 int mock_open(const char *path, int flags, ...) { (void)path; (void)flags; return 42; }
 int mock_ioctl(int fd, unsigned long req, ...) { (void)fd; (void)req; return 0; }

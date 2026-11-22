@@ -54,6 +54,7 @@ int tick_add_task(void (*)(void));
 void pcm_alsa_set_playback_device(const char *);
 void pcm_set_mixer_volume(int, int);
 """)
+    (tmp / "sound.h").write_text("#define SOUND_VOLUME 0\nint sound_current(int);\n")
     (tmp / "audio.h").write_text("""
 #define AUDIO_STATUS_PLAY  1
 #define AUDIO_STATUS_PAUSE 2
@@ -226,7 +227,7 @@ static struct { int level, bt, ctl, actual, vol; } mix[512];
 static int mixes;
 void pcm_set_mixer_volume(int left, int right)
 {
-    assert(left <= 0 && right <= 0 && left == right && mixes < 512); /* never louder than the track */
+    assert(left <= 0 && left == right && mixes < 512); /* never louder than the track (no balance in the mock) */
     mix[mixes].level = left;
     mix[mixes].bt = bt_output;
     mix[mixes].ctl = dev_ctl;
@@ -242,12 +243,15 @@ static intptr_t data_now;
 bool button_queue_empty(void) { return !queued; }
 static intptr_t button_get_data(void) { return data_now; }
 static struct { int volume, parked_volume, volume_on_bt; } global_status;
+int sound_current(int setting) { (void)setting; return global_status.volume; }
+static int boost; /* Bass or Treble above 0, tenths of a dB: sound.c's prescale */
 void sound_set_volume(int value)
 {
     if (value > limit)
         value = limit;
     global_status.volume = value;
-    audiohw_set_volume(value * 10, value * 10);
+    int v = value * 10, p = v + boost > 0 ? -v : v <= -1000 ? 0 : boost;
+    audiohw_set_volume(v + p, v + p);
 }
 static void setvol(void) { sound_set_volume(global_status.volume); }
 
@@ -721,6 +725,7 @@ int main(int argc, char **argv)
         muted = 1;
         on_max = raise_hook;
         audiohw_mute(0);
+        assert(!on_max && last_mix() == 0);
     } else if (!strcmp(run, "stale-ack")) {
         /* an older number set while a newer one is pending acknowledges nothing */
         saved[1] = 0;
@@ -763,6 +768,60 @@ int main(int argc, char **argv)
         audiohw_preinit();
         steps(2);
         assert(!dev_ctl || hs.nwrites > w);
+    } else if (!strcmp(run, "tone")) {
+        /* Bass +6 dB: its boost is in vol[], not Rockbox's number */
+        boost = 60;
+        hs.actual = hs.bluez = 127;
+        boot_bt(1);
+        steps(20);
+        choose(1, 1);
+        steps(4);
+        choose(0, 1);
+        steps(16);
+        assert(dev_ctl && global_status.volume == -60 && hs.actual == 51);
+    } else if (!strcmp(run, "zero-turn")) {
+        /* switched on, then turned up a click a second: taken at 0 all the same */
+        hs.actual = hs.bluez = 127;
+        boot_bt(0);
+        steps(4);
+        shanlingq2_set_device_volume(1);
+        for (int k = 0; k < 25; k++) {
+            steps(4);
+            sound_set_volume(global_status.volume + 1);
+        }
+        steps(8);
+        assert(dev_ctl && hs.actual > 0);
+    } else if (!strcmp(run, "drop-stale")) {
+        /* the wheel down while the second failed Get waits: the drop keeps it */
+        handover();
+        steps(50);
+        hs.fail = 2;
+        while (hs.fail == 2)
+            step();
+        on_get = down_hook;
+        steps(8);
+        assert(!dev_ctl && global_status.volume == -80 && last_mix() == -800);
+        audiohw_preinit(); /* the hand-back */
+        steps(12);
+        assert(dev_ctl && hs.actual == pct_to_dev(20));
+    } else if (!strcmp(run, "wheel-starve")) {
+        /* a click down every second from the connect: the takes don't run out */
+        hs.actual = hs.bluez = 127;
+        boot_bt(1);
+        for (int k = 0; k < 30; k++) {
+            steps(4);
+            sound_set_volume(global_status.volume - 1);
+        }
+        steps(12);
+        assert(dev_ctl);
+    } else if (!strcmp(run, "follow-wheel")) {
+        /* the headset's key and the wheel inside one read: the wheel is the later word */
+        handover();
+        steps(50);
+        hs.actual = hs.bluez = 100;
+        on_get = down_hook;
+        steps(12);
+        assert(dev_ctl && global_status.volume == -80 && hs.actual == pct_to_dev(20));
     } else
         return 2;
     check();
@@ -777,6 +836,7 @@ int main(int argc, char **argv)
                 "insist", "held", "toggle", "step-take", "step-click", "step-limit",
                 "takeover", "rate", "lost-take", "lost-knob", "slow", "paused",
                 "gated-guard", "toggle-race2", "settle-down", "settle-get", "mix-race",
-                "stale-ack", "paused-guard", "late-high", "other-path", "switch-again"):
+                "stale-ack", "paused-guard", "late-high", "other-path", "switch-again",
+                "tone", "zero-turn", "drop-stale", "wheel-starve", "follow-wheel"):
         subprocess.run([str(tmp / "test"), run], check=True, timeout=30)
 print("Q2 Control Device Volume checks passed")
