@@ -1,0 +1,4 @@
+#!/bin/sh
+# Q2 Pod runs this in its own place (q2app takeover=1): Rockbox from its folder, its output in
+# rockbox.log as at power-on
+cd "${0%/*}" && exec ./rockbox >rockbox.log 2>&1

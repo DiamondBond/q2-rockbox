@@ -36,14 +36,15 @@ Installing a release
    (https://github.com/DiamondBond/q2-rockbox/releases) to the card's root,
    giving /.rockbox. The card must be exFAT or FAT (stock mounts it so that
    binaries on it run).
-3. Restart: on Q2 Pod V9.4 and later, System settings > Boot to selects
-   Rockbox or Q2-Pod persistently. Rockbox is the default when no preference
-   has been saved and the card holds /.rockbox/rockbox. Older V8.5–V9.3 always
-   start Rockbox when that file is present.
+3. On Q2 Pod 1.9.4 and later, Rockbox is a row on Library > Apps: pick it to
+   start Rockbox. System settings > Power > Boot to: Rockbox makes the Q2 start
+   in Rockbox at power-on; without that choice it starts in Q2 Pod. Q2 Pod V9.4
+   to 1.9.3 start Rockbox at power-on unless Boot to says Q2 Pod, and V8.5–V9.3
+   always start it when /.rockbox/rockbox is on the card.
 
 To get back to Q2 Pod: Settings > System > Boot stock OS, or hold Return or
 Play/Pause at power-on. Q2 Pod runs for that session; the next power-on
-follows the saved Boot to choice (Rockbox by default). Starting without the
+follows the saved Boot to choice. Starting without the
 card also gives Q2 Pod. Shutting down (hold Play) exits to Q2 Pod for that
 session and does not change that saved choice. For USB storage or a device
 poweroff, go to Q2 Pod first. Stock firmware V1.32 flashes back over the loader
@@ -61,9 +62,12 @@ Reboot shortcut; system-hosted.c). Rockbox runs without demo's watchdog (checkap
 hciplayer (started by demo), so ALSA is free. A Rockbox that hangs keeps the
 stock UI away until the binary is removed with a card reader.
 
-Q2 Pod V8.8's Home shortcut (Display > Shortcut: Rockbox) also starts Rockbox
-after demo: demo leaves /tmp/q2pod-rockbox, stops its watchdog and hciplayer
-and kills itself, and S90play runs Rockbox the same way, then demo again.
+Q2 Pod 1.9.4's Library > Apps row (and Home's Shortcut, set to Rockbox) also
+starts Rockbox after demo. The zip's .rockbox/q2app says takeover=1, so demo
+writes "rockbox" to /tmp/q2pod-takeover, stops its watchdog and hciplayer and
+kills itself; S90play runs .rockbox/q2-rockbox, which runs ./rockbox from that
+directory with its output in rockbox.log, then demo again. Q2 Pod V8.8 to 1.9.3
+do the same from Home's Shortcut with /tmp/q2pod-rockbox and ./rockbox.
 
 Bluetooth
 ---------

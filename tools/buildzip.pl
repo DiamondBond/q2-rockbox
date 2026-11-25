@@ -668,6 +668,10 @@ sub buildzip {
         for (("18-Fixed", "16-GNU-Unifont")) {
             system("$ROOT/tools/convbdf -f -o \"$temp_dir/fonts/$_.fnt\" \"$ROOT/fonts/$_.bdf\" >/dev/null 2>&1");
         }
+        # Q2 Pod's card-app files: Rockbox's row on Library's Apps, run in Q2 Pod's place
+        copy("$ROOT/tools/shanlingq2/card/q2app", "$temp_dir/q2app");
+        copy("$ROOT/tools/shanlingq2/card/q2-rockbox", "$temp_dir/q2-rockbox");
+        chmod 0755, "$temp_dir/q2-rockbox";
     }
 
     # until buildwps.pl is fixed, manually copy the classic_statusbar theme across
